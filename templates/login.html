@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}Login — Hoopscout{% endblock %}
+
+{% block body %}
+<main class="max-w-xl mx-auto px-4 py-10">
+  <header class="mb-6">
+    <h1 class="text-3xl font-extrabold tracking-tight section-title">Sign in</h1>
+    <p class="text-base section-desc text-zinc-600">We’ll email you a magic link.</p>
+  </header>
+
+  <div class="bg-white border border-zinc-200 rounded-xl p-6 shadow-sm space-y-4">
+
+    <form id="f" class="space-y-3">
+      <div>
+        <label for="email" class="block text-sm font-medium">Email</label>
+        <input
+          id="email"
+          type="email"
+          placeholder="you@email.com"
+          required
+          class="mt-1 w-full rounded-md border bg-white border-zinc-300 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-[#6FD06B]"
+        />
+      </div>
+
+      <button
+        class="btn-primary"
+      >
+        Send magic link
+      </button>
+    </form>
+
+    <p id="msg" class="text-sm text-zinc-600"></p>
+
+    <p class="text-xs text-zinc-500">
+      By continuing, you’ll receive an email from Supabase with a sign-in link.
+    </p>
+  </div>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function() {
+    // If already signed in, go straight to the app
+    (async () => {
+      if (!window.sb || !window.sb.auth) return;
+      const { data } = await window.sb.auth.getSession();
+      if (data?.session) window.location.replace("/app");
+    })();
+
+    // Listen for storage events from the callback tab
+    window.addEventListener('storage', (e) => {
+      if (e.key === 'auth_completed' && e.newValue) {
+        // Auth completed in another tab, redirect this one
+        window.location.replace("/app");
+      }
+    });
+
+    // Also listen via BroadcastChannel for faster delivery
+    try {
+      const ch = new BroadcastChannel('auth_channel');
+      ch.onmessage = (ev) => {
+        if (ev?.data?.type === 'signed_in') {
+          window.location.replace('/app');
+        }
+      };
+    } catch (e) {}
+
+    document.getElementById("f").addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      if (!window.sb || !window.sb.auth) {
+        document.getElementById("msg").textContent = "Supabase not ready";
+        return;
+      }
+
+      const email = document.getElementById("email").value.trim();
+      const msg = document.getElementById("msg");
+
+      // Track magic link send attempt
+      const distinctId = window.getDistinctId ? window.getDistinctId() : crypto.randomUUID();
+      fetch('/api/analytics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event: 'magic_link_sent',
+          properties: { 
+            email_domain: email.split('@')[1] || 'unknown',
+            distinct_id: distinctId
+          }
+        })
+      }).catch(() => {});
+
+      msg.textContent = "Sending…";
+
+      // Always point magic link back to our callback route
+      const redirectTo = new URL("/auth/callback", window.location.origin).toString();
+
+      // Start a short polling loop to catch the session as soon as the callback tab completes
+      (async () => {
+        try {
+          for (let i = 0; i < 40; i++) { // ~20s
+            await new Promise(r => setTimeout(r, 500));
+            if (!window.sb || !window.sb.auth) continue;
+            const { data } = await window.sb.auth.getSession();
+            if (data?.session) {
+              window.location.replace('/app');
+              return;
+            }
+          }
+        } catch (e) {}
+      })();
+
+      try {
+        const { error } = await window.sb.auth.signInWithOtp({
+          email,
+          options: { emailRedirectTo: redirectTo }
+        });
+
+        if (error) {
+          msg.textContent = `Error: ${error.message}`;
+          return;
+        }
+
+        // Success: show countdown and close tab
+        let remaining = 5;
+        const renderMsg = () => {
+          msg.textContent = `Email sent! Check your mailbox. This tab will close in ⌛${remaining}`;
+        };
+        renderMsg();
+        const timer = setInterval(() => {
+          remaining -= 1;
+          if (remaining <= 0) {
+            clearInterval(timer);
+            try { window.close(); } catch (e) {}
+          } else {
+            renderMsg();
+          }
+        }, 1000);
+      } catch (err) {
+        msg.textContent = "Error: " + (err?.message || String(err));
+      }
+    });
+  })();
+</script>
+{% endblock %}

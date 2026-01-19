@@ -1,0 +1,92 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Dev Metrics Dashboard</title>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; padding: 24px; }
+    table { border-collapse: collapse; width: 100%; max-width: 980px; }
+    th, td { padding: 8px 12px; border: 1px solid #ddd; text-align: left; }
+    th { background: #f6f6f6; }
+    .muted { color: #666; font-size: 0.9em }
+    /* Prevent the description column from wrapping for compact dashboard rows */
+    td.desc { white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <h1>Dev Metrics Dashboard</h1>
+  <p class="muted">Metrics shown are collected from the local `metrics` table.</p>
+  <div id="metrics-area">Loading...</div>
+  <p>
+    <button id="seed-btn">Seed metrics</button>
+    <span id="seed-status" class="muted"></span>
+  </p>
+  <script>
+    async function loadMetrics() {
+      const r = await fetch('/api/dev/metrics');
+      if (!r.ok) {
+        document.getElementById('metrics-area').textContent = 'Error fetching metrics: ' + r.statusText;
+        return;
+      }
+      const obj = await r.json();
+      if (obj.error) {
+        document.getElementById('metrics-area').textContent = 'Error: ' + obj.error;
+        return;
+      }
+      const m = obj.metrics || {};
+      const keys = Object.keys(m).sort();
+      if (keys.length === 0) {
+        document.getElementById('metrics-area').textContent = 'No metrics collected yet.';
+        return;
+      }
+      // Short, plain-word descriptions (fallback if API doesn't provide them)
+      const fallbackDescriptions = {
+        "llm_calls": "LLM calls attempted",
+        "llm_success": "LLM responses succeeded",
+        "embedding_calls": "Embedding ops",
+        "cache_hits": "Local cache hits",
+        "alias_hits": "Alias lookup hits",
+        "report_saves": "Reports saved",
+        "report_db_reads": "Report DB reads",
+        "query_embedding_cache_hits": "Query embedding cache hits",
+        "query_embedding_stores": "Stored query embeddings",
+        "report_embedding_loads": "Loaded report embeddings",
+        "report_embedding_stores": "Stored report embeddings",
+        "fuzzy_auto_hits": "Auto fuzzy-matches",
+        "fuzzy_suggests": "Fuzzy-match suggestions",
+      };
+      let descs = obj.descriptions || fallbackDescriptions;
+      let html = '<table><thead><tr><th>Metric</th><th>Count</th><th>Description</th></tr></thead><tbody>';
+      for (const k of keys) {
+        const d = (descs[k] || '');
+        // description column uses class 'desc' to prevent wrapping
+        html += `<tr><td>${k}</td><td>${m[k]}</td><td class="muted desc" title="${d}">${d}</td></tr>`;
+      }
+      html += '</tbody></table>';
+      document.getElementById('metrics-area').innerHTML = html;
+    }
+
+    loadMetrics();
+    // refresh every 5s
+    setInterval(loadMetrics, 5000);
+
+    document.getElementById('seed-btn').addEventListener('click', async function () {
+      const status = document.getElementById('seed-status');
+      status.textContent = 'Seeding...';
+      try {
+        const r = await fetch('/api/dev/seed_metrics', { method: 'POST' });
+        if (!r.ok) {
+          const txt = await r.text();
+          status.textContent = 'Error: ' + r.status + ' ' + txt;
+          return;
+        }
+        status.textContent = 'Seeded';
+        loadMetrics();
+        setTimeout(() => { status.textContent = ''; }, 3000);
+      } catch (err) {
+        status.textContent = 'Error: ' + err;
+      }
+    });
+  </script>
+</body>
+</html>

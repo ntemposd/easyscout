@@ -1,0 +1,196 @@
+  <!-- Demo -->
+  <section id="demo" class="space-y-4">
+    <div class="space-y-0 mt-0">
+      <h2 class="text-3xl font-extrabold section-title">Demo: Giannis Antetokounmpo</h2>
+      <p class="text-base section-desc">This is a static preview (read-only). Login to generate reports for any player.</p>
+    </div>
+
+    <!-- App-like layout: main + sidebar -->
+    <div class="grid lg:grid-cols-[2fr_360px] gap-6">
+      <!-- MAIN: Report output -->
+      <div class="space-y-4">
+        <!-- Generate form preview -->
+        <div class="bg-white border border-zinc-200 rounded-xl p-6 shadow-sm space-y-4">
+          <div class="grid sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium">Player</label>
+              <input disabled value="Giannis Antetokounmpo"
+                class="mt-1 w-full rounded-md border bg-zinc-100 border-zinc-300 px-3 py-2 text-sm" />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium">Team</label>
+              <input disabled value="Milwaukee Bucks"
+                class="mt-1 w-full rounded-md border bg-zinc-100 border-zinc-300 px-3 py-2 text-sm" />
+            </div>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-3">
+            <a href="/login"
+              data-analytics-cta="demo_form"
+              class="bg-black text-white px-4 py-2 rounded-md text-sm hover:bg-zinc-800 inline-block">
+              Login to generate reports
+            </a>
+            <span class="text-sm text-zinc-500">Costs 1 credit (€1)</span>
+          </div>
+        </div>
+
+        <!-- Report output -->
+        <div class="space-y-0">
+          <h3 class="text-2xl font-extrabold tracking-tight section-title">Report</h3>
+          <p class="text-sm section-desc text-zinc-600">Sample preview of a generated report.</p>
+        </div>
+        
+        <div class="bg-white border border-zinc-200 rounded-xl p-6 shadow-sm space-y-4">
+          <div class="space-y-3">
+            <div class="text-sm">
+              <div class="font-semibold text-lg mb-3">Scouting Report — Giannis Antetokounmpo (Milwaukee Bucks)</div>
+              
+              <div class="mb-4">
+                <div class="font-semibold mb-2">Info</div>
+                <div class="overflow-x-auto">
+                  <table class="w-full text-sm table-auto border border-zinc-200">
+                    <tbody>
+                      <tr>
+                        <td class="p-2 border-b border-zinc-200 font-semibold bg-zinc-50">Team</td>
+                        <td class="p-2 border-b border-zinc-200">Milwaukee Bucks</td>
+                      </tr>
+                      <tr>
+                        <td class="p-2 border-b border-zinc-200 font-semibold bg-zinc-50">League</td>
+                        <td class="p-2 border-b border-zinc-200">NBA</td>
+                      </tr>
+                      <tr>
+                        <td class="p-2 border-b border-zinc-200 font-semibold bg-zinc-50">Height</td>
+                        <td class="p-2 border-b border-zinc-200">6'11"</td>
+                      </tr>
+                      <tr>
+                        <td class="p-2 border-b border-zinc-200 font-semibold bg-zinc-50">Weight</td>
+                        <td class="p-2 border-b border-zinc-200">243 lb</td>
+                      </tr>
+                      <tr>
+                        <td class="p-2 font-semibold bg-zinc-50">Birthdate</td>
+                        <td class="p-2">Dec 6, 1994</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="mb-4">
+                <div class="font-semibold mb-2">Season snapshot</div>
+                <div class="overflow-x-auto">
+                  <table class="w-full text-sm table-auto border border-zinc-200">
+                    <thead class="bg-zinc-50">
+                      <tr>
+                        <th class="text-left p-2 border-b border-zinc-200">GAMES</th>
+                        <th class="text-left p-2 border-b border-zinc-200">PTS</th>
+                        <th class="text-left p-2 border-b border-zinc-200">REB</th>
+                        <th class="text-left p-2 border-b border-zinc-200">AST</th>
+                        <th class="text-left p-2 border-b border-zinc-200">FG</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td class="p-2 border-b border-zinc-200">—</td>
+                        <td class="p-2 border-b border-zinc-200">29.2</td>
+                        <td class="p-2 border-b border-zinc-200">9.8</td>
+                        <td class="p-2 border-b border-zinc-200">5.5</td>
+                        <td class="p-2 border-b border-zinc-200">65.0%</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div class="text-xs text-zinc-500 mt-2">(Demo numbers only)</div>
+              </div>
+
+              <div class="space-y-3">
+                <div>
+                  <div class="font-semibold mb-2">Strengths</div>
+                  <ul class="list-disc pl-5 text-zinc-600 space-y-1">
+                    <li>Elite rim pressure + transition force; collapses defenses early.</li>
+                    <li>Finishes through contact; punishes mismatches in the paint.</li>
+                    <li>Playmaking growth: hits corner, dump-offs, and short-roll reads.</li>
+                    <li>Defensive impact: weakside rim help + glass cleaning.</li>
+                  </ul>
+                </div>
+
+                <div>
+                  <div class="font-semibold mb-2">Areas to tighten</div>
+                  <ul class="list-disc pl-5 text-zinc-600 space-y-1">
+                    <li>Walling the lane can force kick-outs; requires spacing discipline around him.</li>
+                    <li>Live-ball turnovers can appear when crowded (early help, multiple bodies).</li>
+                    <li>Pull-up / midrange consistency is the swing skill vs deep drop coverage.</li>
+                  </ul>
+                </div>
+
+                <div>
+                  <div class="font-semibold mb-2">Gameplan notes</div>
+                  <ul class="list-disc pl-5 text-zinc-600 space-y-1">
+                    <li>Build a "wall" early: show bodies at nail + elbows, then rotate to shooters.</li>
+                    <li>Make him finish over size from a standstill; avoid reaching (FTs + fouls).</li>
+                    <li>Offensively, surround him with shooting + run inverted PnR to create switches.</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SIDEBAR: Feature highlights -->
+      <aside class="space-y-4">
+        <div class="space-y-0">
+          <h3 class="text-2xl font-extrabold tracking-tight section-title">Features</h3>
+          <p class="text-sm section-desc text-zinc-600">What you get with Easyscout</p>
+        </div>
+        
+        <div class="bg-white border border-zinc-200 rounded-xl p-6 shadow-sm space-y-4">
+          <div class="space-y-3">
+            <div class="flex items-start gap-3">
+              <div class="text-2xl">⚡</div>
+              <div>
+                <div class="font-semibold text-sm">Instant reports</div>
+                <div class="text-sm text-zinc-600">Cache-first generation in seconds</div>
+              </div>
+            </div>
+
+            <div class="flex items-start gap-3">
+              <div class="text-2xl">📊</div>
+              <div>
+                <div class="font-semibold text-sm">Season snapshots</div>
+                <div class="text-sm text-zinc-600">Quick stats tables for context</div>
+              </div>
+            </div>
+
+            <div class="flex items-start gap-3">
+              <div class="text-2xl">🎯</div>
+              <div>
+                <div class="font-semibold text-sm">Coach-ready analysis</div>
+                <div class="text-sm text-zinc-600">Strengths, weaknesses, gameplan notes</div>
+              </div>
+            </div>
+
+            <div class="flex items-start gap-3">
+              <div class="text-2xl">💳</div>
+              <div>
+                <div class="font-semibold text-sm">Simple pricing</div>
+                <div class="text-sm text-zinc-600">1 credit = €1 per report</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="pt-3 border-t border-zinc-200">
+            <a href="/login" data-analytics-cta="sidebar_cta" class="block w-full text-center bg-black text-white px-4 py-2 rounded-md text-sm hover:bg-zinc-800">
+              Login to start
+            </a>
+          </div>
+        </div>
+
+        <div class="bg-zinc-50 border border-zinc-200 rounded-xl p-4">
+          <div class="text-sm text-zinc-600">
+            <strong>Try it now:</strong> Login, add credits via Stripe, and generate reports for any player.
+          </div>
+        </div>
+      </aside>
+    </div>
+  </section>

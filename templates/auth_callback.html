@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Signing you in… — Easyscout{% endblock %}
+
+{% block body %}
+<main class="max-w-xl mx-auto px-4 py-12">
+  <header class="mb-6">
+    <h1 class="text-3xl font-extrabold tracking-tight section-title">Signing you in…</h1>
+    <p class="text-base section-desc text-zinc-600">We’re finalizing your session. This should only take a moment.</p>
+  </header>
+
+  <div class="bg-white border border-zinc-200 rounded-xl p-6 shadow-sm space-y-4">
+    <div class="flex items-center gap-3 text-sm text-zinc-600">
+      <svg class="h-5 w-5 animate-spin text-[#0E2018]" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+      </svg>
+      <span id="msg">Finishing login…</span>
+    </div>
+
+    <p class="text-sm">
+      <a href="/login" class="underline text-zinc-700 hover:text-zinc-900">Back to login</a>
+    </p>
+  </div>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function() {
+    if (!window.sb || !window.sb.auth) {
+      document.getElementById("msg").textContent = "Supabase not ready.";
+      return;
+    }
+    const msg = document.getElementById("msg");
+
+    function goApp() {
+      // Link anonymous ID with authenticated user for automatic merge in PostHog
+      try {
+        const anonId = localStorage.getItem('anonUserId');
+        window.sb.auth.getSession().then(({ data }) => {
+          const userId = data?.session?.user?.id;
+          if (userId && anonId && anonId !== userId) {
+            // Send alias event to merge identities
+            fetch('/api/analytics', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                event: '$alias',
+                properties: { 
+                  distinct_id: userId,
+                  previous_id: anonId
+                }
+              })
+            }).catch(() => {});
+            
+            // Track login success
+            fetch('/api/analytics', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                event: 'user_logged_in',
+                properties: { distinct_id: userId }
+              })
+            }).catch(() => {});
+          }
+        }).catch(() => {});
+      } catch (e) {}
+      
+      // Signal to other tabs that auth completed
+      try {
+        localStorage.setItem('auth_completed', Date.now().toString());
+      } catch (e) {}
+      try {
+        const ch = new BroadcastChannel('auth_channel');
+        ch.postMessage({ type: 'signed_in', at: Date.now() });
+        ch.close();
+      } catch (e) {}
+      
+        // Stay in this tab and go straight to the app
+        window.location.replace("/app");
+    }
+
+    // If Supabase emits a session, redirect immediately.
+    window.sb.auth.onAuthStateChange((_event, session) => {
+      if (session) goApp();
+    });
+
+    (async () => {
+      try {
+        // 1) If a session already exists in storage, go straight to /app
+        let { data } = await window.sb.auth.getSession();
+        if (data?.session) return goApp();
+
+        // 2) If we're in a PKCE/OAuth flow, there may be a ?code=...
+        const url = new URL(window.location.href);
+        const code = url.searchParams.get("code");
+        if (code) {
+          msg.textContent = "Exchanging code for session…";
+          try {
+            await window.sb.auth.exchangeCodeForSession(code);
+          } catch (e) {
+            console.warn("exchangeCodeForSession failed", e);
+          }
+        }
+
+        // 3) Magic link flow often lands with tokens in the URL hash.
+        msg.textContent = "Finalizing session…";
+        for (let i = 0; i < 12; i++) {
+          await new Promise(r => setTimeout(r, 250));
+          const { data: d2 } = await window.sb.auth.getSession();
+          if (d2?.session) {
+            // Clean URL then go
+            history.replaceState({}, document.title, "/auth/callback");
+            return goApp();
+          }
+        }
+
+        msg.textContent = "Login not completed. Please go back and request a new login link.";
+      } catch (e) {
+        msg.textContent = "Login failed: " + (e?.message || String(e));
+      }
+    })();
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en" class="h-full" style="overflow-x: hidden;">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}Easyscout{% endblock %}</title>
+
+    <!-- Tailwind (MVP) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/app.css">
+    
+    <script>
+      // Synchronous pre-check: if a Supabase session token exists in localStorage,
+      // redirect logged-in users away from public pages before rendering.
+      try {
+        const path = window.location.pathname || "/";
+        const exempt = ["/auth/callback", "/billing/success", "/app"];
+        if (!exempt.includes(path)) {
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i) || "";
+            if (k.toLowerCase().includes('supabase') || k.toLowerCase().startsWith('sb')) {
+              const v = localStorage.getItem(k) || "";
+              if (v.includes('access_token') || v.includes('currentSession')) {
+                window.location.replace('/app');
+                break;
+              }
+            }
+          }
+        }
+      } catch (e) {}
+    </script>
+  </head>
+
+  <body class="min-h-screen bg-zinc-50 text-zinc-900 auth-checking flex flex-col" style="overflow-x: hidden;">
+    <!-- Auth loader shown while session/auth checks run -->
+    <div id="auth_loader" class="fixed inset-0 z-50 flex items-center justify-center bg-white/80">
+      <div class="flex items-center gap-3">
+        <svg class="animate-spin h-6 w-6 text-[#0E2018]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+        </svg>
+        <div class="text-sm text-zinc-700">Checking session…</div>
+      </div>
+    </div>
+    <!-- debug UI removed -->
+    <!-- Navbar -->
+    <header class="sticky top-0 z-50 bg-zinc-50/90 backdrop-blur border-b border-zinc-200">
+      <div class="max-w-6xl mx-auto px-4 py-2 flex items-center justify-between">
+        <a href="/" class="inline-flex items-center gap-3">
+          <img src="/static/logo.webp" alt="Scoutbot Logo" class="h-12 w-auto" />
+          <!--<span class="font-bold tracking-tight">Scoutbot</span>-->
+        </a>
+
+        <nav class="flex items-center gap-4 text-sm">
+          <a id="login_link" href="/login" class="btn-primary shadow-sm">
+            Login
+          </a>
+
+          <button id="logout_btn" type="button" class="hidden btn-neutral" onclick="console.log('logout_btn onclick');(function(){try{for(let i=localStorage.length-1;i>=0;i--){const k=localStorage.key(i)||''; if(k.toLowerCase().includes('supabase')||k.toLowerCase().startsWith('sb')) localStorage.removeItem(k);} }catch(e){} try{ if(window.sb && window.sb.auth) window.sb.auth.signOut().catch(function(){}); }catch(e){} window.location.replace('/');})();">
+            Logout
+          </button>
+        </nav>
+
+      </div>
+    </header>
+
+    <!-- Page content -->
+    <div class="flex-grow">
+      {% block body %}{% endblock %}
+    </div>
+    <footer class="border-t border-zinc-200 mt-8">
+      <div class="max-w-6xl mx-auto px-4 py-6 text-sm text-zinc-500 flex flex-col sm:flex-row gap-2 justify-between">
+        <span>
+          © {{ current_year or "2026" }} Easyscout
+        </span>
+
+        <span>
+          Built with 🧡 by
+          <a href="https://ntemposd.me" class="underline hover:text-zinc-700">
+            ntemposd
+          </a>
+        </span>
+
+        <span>
+          <a href="/privacy" class="underline hover:text-zinc-700">Privacy policy</a>
+        </span>
+      </div>
+    </footer>
+
+    <!-- Cookie banner -->
+    <div id="cookie_banner" class="fixed bottom-4 left-0 right-0 sm:left-1/2 sm:-translate-x-1/2 z-50 hidden">
+      <div class="bg-[#E8F4EB] border border-[#C1D9C7] shadow-md rounded-xl px-3 py-3 flex flex-col sm:flex-row gap-3 sm:gap-3 sm:items-center mx-4 sm:max-w-max sm:mx-auto">
+        <div class="text-sm text-zinc-900">
+          We use cookies and analytics to improve Easyscout. Learn more in our <a href="/privacy" class="underline text-[#0E2018] hover:text-[#F68A1F] font-medium">Privacy Policy</a>.
+        </div>
+        <div class="flex gap-2 sm:gap-3 sm:flex-shrink-0">
+            <button id="cookie_accept" class="btn-primary">Got it</button>
+            <button id="cookie_dismiss" class="btn-dismiss">Later</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script>
+      if (!window.sb) {
+        window.sb = window.supabase.createClient(
+          "{{ supabase_url }}",
+          "{{ supabase_anon_key }}"
+        );
+      }
+    </script>
+    <script>
+      (function(){ try{ console.log('base loaded'); }catch(e){} })();
+    </script>
+
+    <script>
+      // Generate and persist anonymous user ID for pre-login tracking
+      (function() {
+        if (!localStorage.getItem('anonUserId')) {
+          localStorage.setItem('anonUserId', crypto.randomUUID());
+        }
+        window.getDistinctId = function() {
+          // Use authenticated user ID if available, else anonymous ID
+          try {
+            const session = window.sb?.auth?.getSession?.();
+            if (session?.data?.session?.user?.id) {
+              return session.data.session.user.id;
+            }
+          } catch (e) {}
+          return localStorage.getItem('anonUserId') || 'unknown';
+        };
+      })();
+
+      // Client helper to forward UI events to server-side analytics endpoint
+      window.trackClientEvent = async function(eventName, properties) {
+        try {
+          const s = await window.sb?.auth?.getSession?.();
+          const token = s?.data?.session?.access_token;
+          await fetch('/api/analytics', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { 'Authorization': 'Bearer ' + token } : {}),
+            },
+            body: JSON.stringify({ 
+              event: eventName, 
+              properties: { 
+                ...(properties || {}),
+                distinct_id: window.getDistinctId()
+              } 
+            }),
+          });
+        } catch (e) {
+          // swallow analytics errors
+        }
+      };
+
+      // Track page view/refresh on every page load (only once per page)
+      let pageViewTracked = false;
+      document.addEventListener('DOMContentLoaded', function() {
+        try {
+          if (pageViewTracked) return;  // Prevent duplicate tracking
+          pageViewTracked = true;
+          
+          const path = window.location.pathname;
+          let pageName = 'unknown';
+          
+          if (path === '/' || path === '/landing') pageName = 'landing';
+          else if (path === '/login') pageName = 'login';
+          else if (path === '/app') pageName = 'app';
+          else if (path === '/auth/callback') pageName = 'auth_callback';
+          else if (path === '/billing/success') pageName = 'billing_success';
+          else if (path.startsWith('/dev/metrics')) pageName = 'dev_metrics';
+          else if (path === '/404') pageName = '404';
+          else pageName = path.replace(/^\//, '').replace(/\//g, '_') || 'root';
+          
+          window.trackClientEvent('page_view', { page_name: pageName });
+        } catch (e) {
+          // swallow errors
+        }
+      });
+    </script>
+
+    <script>
+      // Simple cookie banner logic
+      document.addEventListener('DOMContentLoaded', function() {
+        try {
+          const banner = document.getElementById('cookie_banner');
+          const accept = document.getElementById('cookie_accept');
+          const dismiss = document.getElementById('cookie_dismiss');
+          if (!banner || !accept || !dismiss) return;
+
+          const acknowledged = localStorage.getItem('cookieConsent') === 'accepted';
+          if (!acknowledged) banner.classList.remove('hidden');
+
+          function hideBanner() { banner.classList.add('hidden'); }
+
+          accept.addEventListener('click', function() {
+            localStorage.setItem('cookieConsent', 'accepted');
+            hideBanner();
+          });
+
+          dismiss.addEventListener('click', hideBanner);
+        } catch (e) {
+          // fail silently
+        }
+      });
+    </script>
+
+    {% block scripts %}{% endblock %}
+
+    <script src="/static/app.js" onload="console.log('app.js loaded')" onerror="console.error('app.js failed to load')"></script>
+    <script>
+      (function() {
+        // Hide navbar on scroll down, show on scroll up.
+        try {
+          const header = document.querySelector('header');
+          if (!header) return;
+
+          let lastY = window.scrollY || 0;
+          let ticking = false;
+          let hidden = false;
+          const DELTA = 10; // minimal delta to trigger
+          const MIN_HIDE_Y = 80; // don't hide until scrolled this far
+
+          function onFrame() {
+            const y = window.scrollY || 0;
+            const dy = y - lastY;
+
+            if (Math.abs(dy) < DELTA) {
+              ticking = false;
+              return;
+            }
+
+            if (dy > 0 && y > MIN_HIDE_Y) {
+              // scrolling down
+              if (!hidden) {
+                header.classList.add('nav-hidden');
+                header.classList.remove('nav-visible');
+                hidden = true;
+              }
+            } else {
+              // scrolling up
+              if (hidden) {
+                header.classList.remove('nav-hidden');
+                header.classList.add('nav-visible');
+                hidden = false;
+              }
+            }
+
+            lastY = Math.max(0, y);
+            ticking = false;
+          }
+
+          window.addEventListener('scroll', function() {
+            if (!ticking) {
+              ticking = true;
+              requestAnimationFrame(onFrame);
+            }
+          }, { passive: true });
+        } catch (e) {
+          console.warn('nav hide script failed', e);
+        }
+      })();
+    </script>
+    <script>
+      (function() {
+        function revealBody() {
+          try { document.body.classList.remove('auth-checking'); } catch (e) {}
+          try { const l = document.getElementById('auth_loader'); if (l) l.style.display = 'none'; } catch (e) {}
+        }
+
+        if (!window.sb || !window.sb.auth) {
+          console.warn("Supabase not ready");
+          revealBody();
+          return;
+        }
+
+        const userBadge = document.getElementById("user_badge");
+        const loginBtn = document.getElementById("login_link");
+        const logoutBtn = document.getElementById("logout_btn");
+
+        function setHomeHref(href) {
+          try {
+            const home = document.querySelector('a[href="/"]');
+            if (home) home.setAttribute('href', href);
+          } catch (e) {}
+        }
+
+        function rewriteLoginLinks(href) {
+          try {
+            // anchors
+            document.querySelectorAll('a[href="/login"]').forEach(a => a.setAttribute('href', href));
+            // onclick buttons that navigate to /login
+            document.querySelectorAll('[onclick]').forEach(el => {
+              const v = el.getAttribute('onclick') || '';
+              if (v.includes("/login")) {
+                el.setAttribute('onclick', v.replace(/\"?\/login\"?/g, '"' + href + '"'));
+              }
+            });
+          } catch (e) {}
+        }
+
+        function setUserBadgeFromSession(session) {
+          try {
+            if (!userBadge) return;
+            // Don't update badge if it already has content with credits
+            // (let index.html handle it with its own credit-aware logic)
+            if (userBadge.innerHTML && userBadge.innerHTML.includes('credits')) {
+              return;
+            }
+            const email = session?.user?.email || null;
+            if (email) {
+              const name = String(email).split('@')[0];
+              userBadge.textContent = `Hi ${name}!`;
+            } else {
+              userBadge.textContent = 'Not signed in';
+            }
+          } catch (e) {}
+        }
+
+        function showLoggedIn() {
+          if (loginBtn) loginBtn.classList.add("hidden");
+          if (logoutBtn) logoutBtn.classList.remove("hidden");
+          setHomeHref('/app');
+          rewriteLoginLinks('/app');
+        }
+
+        function showLoggedOut() {
+          if (loginBtn) loginBtn.classList.remove("hidden");
+          if (logoutBtn) logoutBtn.classList.add("hidden");
+          setHomeHref('/');
+          rewriteLoginLinks('/login');
+          try { if (userBadge) userBadge.textContent = 'Not signed in'; } catch (e) {}
+        }
+
+        // Initial check + lock logged-in users to `/app` (exempting some pages)
+        function shouldExemptPath(path) {
+          const exempt = ["/auth/callback", "/billing/success"];
+          return exempt.some(e => path === e || path.startsWith(e));
+        }
+
+        window.sb.auth.getSession().then(({ data }) => {
+          if (data?.session) {
+            showLoggedIn();
+            try {
+              const p = window.location.pathname || "/";
+              if (p !== "/app" && !shouldExemptPath(p)) {
+                window.location.replace("/app");
+                return;
+              }
+            } catch (e) {
+              // ignore and continue
+            }
+            // set badge greeting from the session
+            setUserBadgeFromSession(data?.session || null);
+          } else {
+            // If we're on the app page and there is no session, redirect to /login
+            try {
+              const p = window.location.pathname || "/";
+              if (p === "/app") {
+                window.location.replace("/login");
+                return;
+              }
+            } catch (e) {}
+            showLoggedOut();
+          }
+          revealBody();
+        });
+
+        // React to auth changes
+        window.sb.auth.onAuthStateChange((_event, session) => {
+          if (session) {
+            showLoggedIn();
+            try {
+              const p = window.location.pathname || "/";
+              if (p !== "/app" && !shouldExemptPath(p)) {
+                window.location.replace("/app");
+              }
+            } catch (e) {
+              // ignore
+            }
+            setUserBadgeFromSession(session);
+          } else {
+            // If we're on the app page and the user signed out, redirect to /login
+            try {
+              const p = window.location.pathname || "/";
+              if (p === "/app") {
+                window.location.replace("/login");
+                return;
+              }
+            } catch (e) {}
+            showLoggedOut();
+          }
+          // In case auth state changes after initial check, ensure page visible briefly before possible redirect
+          revealBody();
+        });
+
+        // Logout: initiate signOut and redirect immediately for instant UX
+        logoutBtn?.addEventListener("click", () => {
+          console.log('logoutBtn addEventListener');
+          
+          // Track logout event before clearing session
+          try {
+            window.trackClientEvent('user_logged_out', {});
+          } catch (e) {}
+          
+          try {
+            // remove supabase keys synchronously to avoid head pre-check redirecting back to /app
+            for (let i = localStorage.length - 1; i >= 0; i--) {
+              const k = localStorage.key(i) || '';
+              if (k.toLowerCase().includes('supabase') || k.toLowerCase().startsWith('sb')) {
+                localStorage.removeItem(k);
+              }
+            }
+          } catch (e) {}
+          try { window.sb.auth.signOut().catch(() => {}); } catch (e) {}
+          window.location.replace('/');
+        });
+      })();
+
+      // Fallback: delegated logout handler so clicks always work even if
+      // Supabase client or auth subsystem isn't initialized yet.
+      document.addEventListener('click', function (e) {
+        try {
+          const target = e.target;
+          if (!target) return;
+          const btn = (target.id === 'logout_btn') ? target : (target.closest ? target.closest('#logout_btn') : null);
+          if (!btn) return;
+          console.log('delegated logout handler');
+          try {
+            for (let i = localStorage.length - 1; i >= 0; i--) {
+              const k = localStorage.key(i) || '';
+              if (k.toLowerCase().includes('supabase') || k.toLowerCase().startsWith('sb')) {
+                localStorage.removeItem(k);
+              }
+            }
+          } catch (e) {}
+          try { window.sb?.auth?.signOut?.().catch(() => {}); } catch (e) {}
+          window.location.replace('/');
+        } catch (err) {
+          // swallow
+        }
+      });
+    </script>
+
+
+  </body>
+</html>

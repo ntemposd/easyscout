@@ -1,0 +1,235 @@
+/* IMPORTANT: scope headings properly */
+#out_html h1, #out_html h2, #out_html h3 {
+  margin-top: 1rem;
+  font-weight: 700;
+}
+
+#out_html {
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+  word-break: break-word;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+#out_html p { line-height: 1.6; margin: 0.5rem 0; }
+#out_html ul { list-style: disc; padding-left: 1.25rem; margin: 0.5rem 0; }
+#out_html ol { list-style: decimal; padding-left: 1.25rem; margin: 0.5rem 0; }
+#out_html li { margin: 0.25rem 0; }
+#out_html a { text-decoration: underline; }
+#out_html pre { padding: 0.75rem; overflow: auto; border-radius: 0.5rem; max-width: 100%; overflow-x: auto; }
+
+/* Reports skeleton + enter animation to reduce CLS and flicker (moved from index.html) */
+@media (min-width: 1024px) {
+  /* Reserve sidebar width to avoid CLS: main column flexible, sidebar fixed */
+  [data-no-cls] { grid-template-columns: 2fr 360px; }
+}
+.reports-skeleton { display: flex; flex-direction: column; gap: .5rem; }
+.reports-skeleton .s-item { height: 56px; border-radius: .5rem; background: linear-gradient(90deg, rgba(226,232,240,0.8), rgba(241,245,249,0.8)); }
+@keyframes pulse { 0% { opacity: .7 } 50% { opacity: 1 } 100% { opacity: .7 } }
+.reports-skeleton .s-item { animation: pulse 1.2s ease-in-out infinite; }
+.report-item { opacity: 0; transform: translateY(6px); transition: opacity .28s ease, transform .28s ease; }
+.report-item.visible { opacity: 1; transform: none; }
+
+/* Section header / description consistent spacing helpers */
+.section-title { margin-bottom: 0 !important; }
+.section-desc { margin-top: 0.05rem !important; margin-bottom: 0.5rem !important; color: rgba(100,116,139,var(--tw-text-opacity,1)); }
+
+/* Hide login/logout buttons while auth check runs to avoid brief flash */
+.auth-checking #login_link,
+.auth-checking #logout_btn {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* Backdrop blur for the auth loader (moved from inline style) */
+#auth_loader { backdrop-filter: blur(6px); }
+
+/* Reserve scrollbar gutter to avoid layout shift when page becomes scrollable */
+html, body { scrollbar-gutter: stable; }
+
+/* Fallback: if `scrollbar-gutter` isn't supported, always show vertical scrollbar to keep layout stable */
+@supports not (scrollbar-gutter: stable) {
+  body { overflow-y: scroll; }
+}
+
+/* Prevent tables from creating page-wide overflow; prefer inner scrolling */
+/* Ensure overflow containers constrain width and allow touch scrolling */
+.overflow-auto {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.overflow-auto table {
+  min-width: 0; /* allow table to shrink below content width */
+  width: 100%;
+}
+
+@media (max-width: 640px) {
+  /* On small screens, let tables use auto layout and let cells wrap */
+  .overflow-auto table {
+    table-layout: auto !important;
+  }
+  .overflow-auto table col { width: auto !important; }
+  /* Allow cells to wrap at word boundaries, don't break words mid-word */
+  td, th { word-break: normal; overflow-wrap: break-word; }
+}
+
+/* Prevent page horizontal overflow while keeping inner scrolls */
+body { overflow-x: hidden; }
+
+/* Speech-bubble style for the index `#user_badge` */
+#user_badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  background: #ffffff;
+  border: 1px solid #e6e7eb; /* matches border-zinc-200 */
+  color: #374151; /* text-zinc-700 */
+  padding: .35rem .9rem;
+  border-radius: 9999px;
+  font-size: .875rem;
+  box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+}
+
+/* Tail (outer border) - positioned at top */
+#user_badge::before {
+  content: "";
+  position: absolute;
+  left: 18px;
+  top: -8px;
+  width: 0;
+  height: 0;
+  border-width: 0 8px 8px 8px;
+  border-style: solid;
+  border-color: transparent transparent #e6e7eb transparent; /* border color */
+}
+
+/* Tail (inner fill) - positioned at top */
+#user_badge::after {
+  content: "";
+  position: absolute;
+  left: 18px;
+  top: -7px;
+  width: 0;
+  height: 0;
+  border-width: 0 7px 7px 7px;
+  border-style: solid;
+  border-color: transparent transparent #ffffff transparent; /* fill */
+}
+
+/* Header hide/show on scroll */
+header {
+  transition: transform 260ms cubic-bezier(.2,.9,.2,1), box-shadow 200ms ease;
+  will-change: transform;
+}
+
+/* When hidden, move header off-screen (preserves stacking context) */
+header.nav-hidden {
+  transform: translateY(-100%);
+  box-shadow: none !important;
+}
+
+/* When visible, ensure transform reset */
+header.nav-visible {
+  transform: translateY(0);
+}
+
+/* Button Styles */
+.btn-primary {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border-radius: 0.375rem;
+  background-color: #6FD06B;
+  color: #0E2018;
+  transition: background-color 150ms, color 150ms;
+}
+
+.btn-primary:hover {
+  background-color: #F68A1F;
+  color: white;
+}
+
+.btn-primary-lg {
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border-radius: 0.5rem;
+  background-color: #6FD06B;
+  color: #0E2018;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  transition: background-color 150ms, color 150ms;
+}
+
+.btn-primary-lg:hover {
+  background-color: #F68A1F;
+  color: white;
+}
+
+.btn-secondary {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border-radius: 0.375rem;
+  border: 1px solid #6FD06B;
+  background-color: white;
+  color: #0E2018;
+  transition: background-color 150ms, color 150ms;
+}
+
+.btn-secondary:hover {
+  background-color: #F68A1F;
+  border-color: #F68A1F;
+  color: white;
+}
+
+.btn-secondary-lg {
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border-radius: 0.5rem;
+  border: 1px solid #6FD06B;
+  background-color: white;
+  color: #0E2018;
+  transition: background-color 150ms, color 150ms;
+}
+
+.btn-secondary-lg:hover {
+  background-color: #F68A1F;
+  border-color: #F68A1F;
+  color: white;
+}
+
+.btn-dismiss {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border-radius: 0.375rem;
+  border: 1px solid #9CB5A5;
+  background-color: transparent;
+  color: #0E2018;
+  transition: background-color 150ms;
+}
+
+.btn-dismiss:hover {
+  background-color: #D5E7DB;
+}
+
+.btn-neutral {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border-radius: 0.375rem;
+  border: 1px solid #d4d4d8;
+  background-color: white;
+  color: #52525b;
+  transition: background-color 150ms, border-color 150ms;
+}
+
+.btn-neutral:hover {
+  background-color: #fafafa;
+  border-color: #a1a1aa;
+}

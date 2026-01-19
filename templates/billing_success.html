@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Payment received — Easyscout{% endblock %}
+
+{% block body %}
+<main class="max-w-xl mx-auto px-4 py-10">
+  <header class="mb-6">
+    <h1 class="text-3xl font-extrabold tracking-tight section-title">Payment received ✅</h1>
+    <p class="text-base section-desc text-zinc-600">Thanks — your purchase was successful.</p>
+  </header>
+
+  <div class="bg-white border border-zinc-200 rounded-xl p-6 shadow-sm space-y-3">
+    <p id="msg" class="text-sm text-zinc-600">Confirming credits…</p>
+    <p class="text-sm">
+      <a href="/app" class="underline text-zinc-700 hover:text-zinc-900">Back to Easyscout</a>
+    </p>
+  </div>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const msg = document.getElementById("msg");
+
+  (async () => {
+    if (!window.sb || !window.sb.auth) {
+      msg.textContent = "Supabase not ready.";
+      return;
+    }
+    try {
+      const url = new URL(window.location.href);
+      const session_id = url.searchParams.get("session_id");
+
+      if (!session_id) {
+        msg.textContent = "Missing session_id.";
+        return;
+      }
+
+      const { data } = await window.sb.auth.getSession();
+      const token = data?.session?.access_token;
+
+      if (!token) {
+        msg.textContent = "You are not logged in. Please login again, then your credits will appear in /app.";
+        return;
+      }
+
+      const r = await fetch("/api/stripe/confirm", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ session_id })
+      });
+
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        msg.textContent = "Confirm failed: " + (j.error || `HTTP ${r.status}`);
+        return;
+      }
+
+      msg.textContent = `Credits updated! New balance: ${j.credits}. Redirecting…`;
+      setTimeout(() => window.location.replace("/app"), 900);
+    } catch (e) {
+      msg.textContent = "Confirm failed: " + (e?.message || String(e));
+    }
+  })();
+</script>
+{% endblock %}

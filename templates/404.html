@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}404 - Page Not Found{% endblock %}
+
+{% block body %}
+<main class="max-w-6xl mx-auto px-4 py-20 text-center">
+  <div class="space-y-6">
+    <div class="text-8xl font-bold text-zinc-300">404</div>
+    
+    <h1 class="text-3xl font-extrabold tracking-tight">
+      Page Not Found
+    </h1>
+    
+    <p class="text-base text-zinc-600 max-w-md mx-auto">
+      The page you're looking for doesn't exist or has been moved.
+    </p>
+    
+    <div class="flex flex-wrap gap-3 justify-center pt-4">
+      <a href="/app"
+         class="bg-black text-white px-5 py-3 rounded-md text-sm hover:bg-zinc-800">
+        Go to App
+      </a>
+      <a href="/"
+         class="bg-zinc-200 text-zinc-900 px-5 py-3 rounded-md text-sm hover:bg-zinc-300">
+        Back to Home
+      </a>
+    </div>
+  </div>
+</main>
+{% endblock %}

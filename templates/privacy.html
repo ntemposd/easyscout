@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Privacy Policy — Easyscout{% endblock %}
+
+{% block body %}
+<main class="max-w-6xl mx-auto px-4 py-12 space-y-6">
+  <header class="space-y-2">
+    <p class="text-sm uppercase tracking-wide text-zinc-500">Privacy Policy</p>
+    <h1 class="text-4xl font-extrabold tracking-tight text-zinc-900">Easyscout Privacy Policy</h1>
+    <p class="text-sm text-zinc-600">Last updated: January 18, 2026</p>
+  </header>
+
+  <div class="bg-white border border-zinc-200 rounded-2xl shadow-sm p-8 md:p-10 space-y-8">
+    <div class="space-y-8 text-base text-zinc-700 leading-relaxed">
+      <p>Easyscout ("we", "us") provides AI-assisted basketball scouting reports. This policy explains what we collect, why we collect it, and your choices.</p>
+
+      <div class="space-y-3">
+        <h2 class="text-xl font-semibold text-zinc-900">Data we collect</h2>
+        <ul class="list-disc list-inside space-y-2">
+          <li>Account data: email, name (if provided), and authentication tokens from Supabase.</li>
+          <li>Usage data: page views, feature interactions, device and browser info for analytics.</li>
+          <li>Payment data: processed by Stripe; we do not store full card details.</li>
+          <li>Content you submit: player names, queries, and generated reports.</li>
+        </ul>
+      </div>
+
+      <div class="space-y-3">
+        <h2 class="text-xl font-semibold text-zinc-900">How we use data</h2>
+        <ul class="list-disc list-inside space-y-2">
+          <li>Provide and improve the scouting service.</li>
+          <li>Billing, fraud prevention, and support.</li>
+          <li>Analytics to understand product usage and reliability.</li>
+          <li>Security, abuse prevention, and legal compliance.</li>
+        </ul>
+      </div>
+
+      <div class="space-y-3">
+        <h2 class="text-xl font-semibold text-zinc-900">Cookies and local storage</h2>
+        <ul class="list-disc list-inside space-y-2">
+          <li>Essential: session/auth tokens to keep you signed in.</li>
+          <li>Analytics: PostHog for product analytics and event tracking.</li>
+          <li>Preferences: banner acknowledgements and UI settings.</li>
+        </ul>
+        <p>You can block cookies in your browser, but some features may not work.</p>
+      </div>
+
+      <div class="space-y-3">
+        <h2 class="text-xl font-semibold text-zinc-900">Third parties</h2>
+        <ul class="list-disc list-inside space-y-2">
+          <li>Supabase (authentication, database, storage).</li>
+          <li>PostHog (product analytics).</li>
+          <li>Stripe (payments).</li>
+        </ul>
+      </div>
+
+      <div class="space-y-3">
+        <h2 class="text-xl font-semibold text-zinc-900">Data retention</h2>
+        <ul class="list-disc list-inside space-y-2">
+          <li>Account and billing records: kept while your account is active and as required by law.</li>
+          <li>Analytics data: retained per our analytics configuration; aggregates may be pruned.</li>
+          <li>Reports and inputs: retained to operate the service unless you request deletion.</li>
+        </ul>
+      </div>
+
+      <div class="space-y-3">
+        <h2 class="text-xl font-semibold text-zinc-900">Your choices</h2>
+        <ul class="list-disc list-inside space-y-2">
+          <li>Opt out of non-essential cookies via your browser settings.</li>
+          <li>Access, update, or delete your account data by contacting support.</li>
+          <li>Request export or deletion of your reports and personal data (subject to legal obligations).</li>
+        </ul>
+      </div>
+
+      <div class="space-y-3">
+        <h2 class="text-xl font-semibold text-zinc-900">Security</h2>
+        <p>We use HTTPS, Supabase access controls, and delegate payment security to Stripe (PCI-compliant).</p>
+      </div>
+
+      <div class="space-y-3">
+        <h2 class="text-xl font-semibold text-zinc-900">International transfers</h2>
+        <p>Data may be processed in the US or EU depending on provider locations (Supabase, PostHog, Stripe).</p>
+      </div>
+
+      <div class="space-y-3">
+        <h2 class="text-xl font-semibold text-zinc-900">Children</h2>
+        <p>Not directed to children under 16; do not use the service if you are under 16.</p>
+      </div>
+
+      <div class="space-y-3">
+        <h2 class="text-xl font-semibold text-zinc-900">Contact</h2>
+        <p>Email: <a href="mailto:support@easyscout.com" class="text-[#F68A1F] hover:underline">support@easyscout.com</a></p>
+      </div>
+
+      <div class="space-y-1">
+        <h2 class="text-xl font-semibold text-zinc-900">Updates</h2>
+        <p>We may update this policy. The "Last updated" date reflects changes.</p>
+      </div>
+    </div>
+  </div>
+</main>
+{% endblock %}
