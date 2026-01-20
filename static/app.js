@@ -108,7 +108,7 @@ const sb = window.sb;
                   (r) => `
                     <tr class="border-t border-zinc-200">
                       <td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">${escapeHtml(r.key)}</td>
-                      <td class="py-2 font-medium whitespace-pre-line break-words">${escapeHtml(cleanValue(r.val, "Unknown"))}</td>
+                      <td class="py-2 font-medium whitespace-normal sm:whitespace-nowrap">${escapeHtml(cleanValue(r.val, "Unknown"))}</td>
                     </tr>
                   `
                 )
@@ -152,8 +152,8 @@ const sb = window.sb;
       <section class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
         <div class="text-sm font-semibold text-zinc-900">${escapeHtml(title)}</div>
 
-        <div class="mt-3 overflow-auto">
-          <table class="w-full text-sm border-collapse" style="table-layout:fixed;">
+        <div class="mt-3 custom-scrollbar" style="overflow-x: auto; -webkit-overflow-scrolling: touch;">
+          <table class="text-sm border-collapse" style="table-layout:fixed; min-width: 100%; white-space: nowrap;">
             ${colgroup}
             <thead>
               <tr class="border-b border-zinc-200">
@@ -312,6 +312,72 @@ const sb = window.sb;
     return renderCardTable("Grades", rows);
   }
 
+  // Enable horizontal drag-to-scroll on overflow-auto containers
+  function enableTableDragScroll() {
+    // Select all scrollable containers (both with .overflow-auto class and inline overflow-x: auto styles)
+    const containers = document.querySelectorAll('.overflow-auto, .custom-scrollbar');
+    
+    containers.forEach((container) => {
+      // Only initialize if not already initialized and if container is actually scrollable
+      if (container._dragScrollInitialized) return;
+      if (container.scrollWidth <= container.clientWidth) return; // Skip if no horizontal scroll
+      
+      container._dragScrollInitialized = true;
+
+      let isDown = false;
+      let startX;
+      let scrollLeft;
+
+      container.addEventListener('mousedown', (e) => {
+        // Only activate on left mouse button
+        if (e.button !== 0) return;
+        isDown = true;
+        startX = e.pageX - container.offsetLeft;
+        scrollLeft = container.scrollLeft;
+        container.style.cursor = 'grabbing';
+      });
+
+      container.addEventListener('mouseleave', () => {
+        isDown = false;
+        container.style.cursor = 'default';
+      });
+
+      container.addEventListener('mouseup', () => {
+        isDown = false;
+        container.style.cursor = 'default';
+      });
+
+      container.addEventListener('mousemove', (e) => {
+        if (!isDown) return;
+        e.preventDefault();
+        const x = e.pageX - container.offsetLeft;
+        const walk = (x - startX) * 1;
+        container.scrollLeft = scrollLeft - walk;
+      });
+
+      // Touch support for mobile
+      let touchStartX;
+      let touchScrollLeft;
+
+      container.addEventListener('touchstart', (e) => {
+        if (e.touches.length !== 1) return;
+        touchStartX = e.touches[0].pageX - container.offsetLeft;
+        touchScrollLeft = container.scrollLeft;
+      });
+
+      container.addEventListener('touchmove', (e) => {
+        if (!touchStartX) return;
+        const x = e.touches[0].pageX - container.offsetLeft;
+        const walk = (x - touchStartX) * 1;
+        container.scrollLeft = touchScrollLeft - walk;
+      });
+
+      container.addEventListener('touchend', () => {
+        touchStartX = null;
+      });
+    });
+  }
+
   function renderReportTitle(player, infoFields = {}, apiTeam = "") {
     // Show only the player's name in the title (avoid duplicating "Scouting Report —" text)
     return `${player}`;
@@ -337,10 +403,24 @@ const sb = window.sb;
       ? `<div class="text-sm text-zinc-700">${escapeHtml(finalVerdict)}</div>`
       : "";
 
+    // Format the generated date
+    let dateBadge = "";
+    if (payload.created_at) {
+      try {
+        const d = new Date(payload.created_at);
+        const dateStr = d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+        dateBadge = `<div class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-zinc-100 text-zinc-700">Generated ${dateStr}</div>`;
+      } catch (e) {
+        // Fallback if date parsing fails
+        dateBadge = `<div class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-zinc-100 text-zinc-700">Generated ${payload.created_at.split('T')[0]}</div>`;
+      }
+    }
+
     return `
       <div class="space-y-4">
         <div class="space-y-1">
           <div class="text-2xl font-bold text-zinc-900">${escapeHtml(title)}</div>
+          ${dateBadge}
           ${verdictBlock}
         </div>
 
@@ -531,6 +611,7 @@ const sb = window.sb;
                 }
 
                 $("out_html").innerHTML = window.renderReport ? window.renderReport(payload2) : `<pre>${escapeHtml(payload2.report_md || "")}</pre>`;
+                window.enableTableDragScroll?.();
                 setText("badge", "📚 Loaded suggested report");
                 setText("status", "Loaded from library");
                 window.loadReports?.();
@@ -617,6 +698,9 @@ const sb = window.sb;
         // render html
         $("out_html").innerHTML = renderReport(data);
 
+        // Enable drag-to-scroll on report tables
+        window.enableTableDragScroll?.();
+
         // ✅ refresh sidebar list after a successful save/generate
         window.loadReports?.();
 
@@ -643,8 +727,9 @@ const sb = window.sb;
     }
   }
 
-  // Expose renderer for other scripts (base.html uses window.renderReport when opening saved reports)
+  // Expose functions for other scripts (base.html uses window.renderReport when opening saved reports)
   try { window.renderReport = renderReport; } catch (e) {}
+  try { window.enableTableDragScroll = enableTableDragScroll; } catch (e) {}
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', _startApp);

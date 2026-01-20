@@ -325,14 +325,21 @@ def list_reports(user_id: str, q: str = "", limit: int = 20) -> List[Dict[str, A
     params: List[Any] = [user_id]
 
     if q:
-        where += " and (player_name ilike %s or query ilike %s)"
+        # Search across key fields: player, league, team, position
+        where += """ and (
+            player_name ilike %s 
+            or (payload->>'league') ilike %s
+            or (payload->'info_fields'->>'League') ilike %s
+            or (payload->'info_fields'->>'Team') ilike %s
+            or (payload->'info_fields'->>'Position') ilike %s
+        )"""
         like = f"%{q}%"
-        params += [like, like]
+        params += [like, like, like, like, like]
 
     with _get_pool().connection() as conn, conn.cursor() as cur:
         cur.execute(
             f"""
-            select id, player_name, created_at, cached
+            select id, player_name, created_at, cached, payload
             from public.reports
             where {where}
             order by created_at desc, id desc
@@ -342,15 +349,34 @@ def list_reports(user_id: str, q: str = "", limit: int = 20) -> List[Dict[str, A
         )
         rows = cur.fetchall()
 
-    return [
-        {
+    results = []
+    for r in rows:
+        payload = r[4] if r[4] and isinstance(r[4], dict) else {}
+        # Try top-level first, then fall back to info_fields
+        team = (payload.get("team") or payload.get("team_name") or "").strip()
+        league = (payload.get("league") or "").strip()
+        
+        # Try to extract from info_fields if not found
+        info_fields = payload.get("info_fields", {}) or {}
+        if not team:
+            team = (info_fields.get("Team") or "").strip()
+        if not league:
+            league = (info_fields.get("League") or "").strip()
+        
+        # Extract position from info_fields
+        position = (info_fields.get("Position") or "").strip()
+        
+        results.append({
             "id": int(r[0]),
             "player_name": r[1],
             "created_at": r[2].isoformat() if r[2] else None,
             "cached": bool(r[3]),
-        }
-        for r in rows
-    ]
+            "team": team,
+            "league": league,
+            "position": position,
+        })
+    
+    return results
 
 
 def get_report(user_id: str, report_id: int) -> Optional[Dict[str, Any]]:

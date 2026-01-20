@@ -66,7 +66,7 @@
             <label class="inline-flex items-center gap-2">
               <input id="refresh" type="checkbox"
                 class="rounded border-zinc-300 text-[#6FD06B] focus:ring-[#6FD06B]" />
-              Force refresh (ignore cache)
+              Ignore saved report
             </label>
           </fieldset>
 
@@ -117,7 +117,7 @@
             <div class="text-sm text-zinc-700">Generating report…</div>
           </div>
         </div>
-        <div id="out_html" class="space-y-3" style="overflow-x: auto;">
+        <div id="out_html" class="space-y-3" style="max-width: 100%; overflow-x: hidden;">
           <div class="text-sm text-zinc-500">No report yet.</div>
         </div>
 
@@ -139,7 +139,7 @@
 
         <div class="space-y-1">
           <label for="report_q" class="block text-sm font-medium">Search</label>
-          <input id="report_q" type="text" placeholder="Search player, team, league…"
+          <input id="report_q" type="text" placeholder="Search position, player, team, league…"
             class="w-full rounded-md border bg-white border-zinc-300 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-[#6FD06B]" />
           <div class="text-xs text-zinc-500">
             Click a report to open it.
@@ -390,6 +390,11 @@
         out.innerHTML = `<pre class="text-sm whitespace-pre-wrap">${(payload.report_md || "")}</pre>`;
       }
 
+      // Enable drag-to-scroll on loaded report tables
+      if (typeof window.enableTableDragScroll === "function") {
+        window.enableTableDragScroll();
+      }
+
       // Scroll the report title into view and align it under the sticky header
       try {
         const out = document.getElementById('out_html');
@@ -505,7 +510,7 @@
           class="report-item w-full text-left text-sm px-3 py-2 rounded-md border border-zinc-200 hover:bg-zinc-50"
           data-report-id="${it.id}">
           <div class="font-medium">${it.player_name || "Report"}</div>
-          <div class="text-xs text-zinc-500">${dateStr}</div>
+          ${it.position ? `<div class="text-xs text-zinc-500">${it.position}</div>` : ''}
         </button>
       `;
       }).join("");
@@ -560,7 +565,7 @@
           class="report-item w-full text-left text-sm px-3 py-2 rounded-md border border-zinc-200 hover:bg-zinc-50"
           data-report-id="${it.id}">
           <div class="font-medium">${it.player_name || "Report"}</div>
-          <div class="text-xs text-zinc-500">${dateStr}</div>
+          ${it.position ? `<div class="text-xs text-zinc-500">${it.position}</div>` : ''}
         </button>
       `;
       }).join("");

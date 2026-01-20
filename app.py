@@ -77,6 +77,39 @@ from difflib import SequenceMatcher
 import re
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
+app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", os.urandom(32).hex())
+app.config["SESSION_COOKIE_SECURE"] = os.getenv("DEV_TOOLS") != "1"  # HTTPS only in production
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+
+
+@app.after_request
+def add_security_headers(response):
+    """Add security headers to all responses"""
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive, nosnippet"
+    # Only add HSTS if in production (HTTPS)
+    if os.getenv("DEV_TOOLS") != "1":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+
+@app.route("/robots.txt")
+def robots_txt():
+    return app.send_static_file("robots.txt")
+
+
+@app.route("/sitemap.xml")
+def sitemap():
+    return app.send_static_file("sitemap.xml")
+
+
+@app.route("/favicon.ico")
+def favicon():
+    return app.send_static_file("../favicon.ico")
 
 
 # 404 handler: render 404 template without ERROR logs
@@ -243,12 +276,6 @@ def privacy_page():
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
-
-
-@app.get("/favicon.ico")
-def favicon():
-    from flask import send_from_directory
-    return send_from_directory(".", "favicon.ico")
 
 
 @app.post("/api/render_md")
@@ -1282,7 +1309,7 @@ def scout():
             else:
                 # No league provided: require very high suggest threshold to force
                 # LLM fallback when first-name signal is weak (avoid Okaro→Derrick).
-                pre_auto, pre_suggest = 92, 88
+                pre_auto, pre_suggest = 88, 75
 
             pre_similar = _best_similar_report(
                 user_id,
@@ -1506,7 +1533,7 @@ def scout():
             if league and league.strip():
                 sim_auto, sim_suggest = 84, 74
             else:
-                sim_auto, sim_suggest = 92, 82
+                sim_auto, sim_suggest = 88, 75
 
             similar = _best_similar_report(
                 user_id,
@@ -1692,9 +1719,9 @@ def scout():
         try:
             # Fallback fuzzy-match after a PLAYER_NOT_FOUND sentinel from the model.
             if league and league.strip():
-                fb_auto, fb_suggest = 90, 80
+                fb_auto, fb_suggest = 88, 75
             else:
-                fb_auto, fb_suggest = 96, 86
+                fb_auto, fb_suggest = 92, 78
 
             fb = _best_similar_report(
                 user_id,

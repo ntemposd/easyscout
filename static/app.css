@@ -79,6 +79,31 @@ html, body { scrollbar-gutter: stable; }
 /* Prevent page horizontal overflow while keeping inner scrolls */
 body { overflow-x: hidden; }
 
+/* Scrollable table container */
+.overflow-auto {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Lighter custom scrollbar */
+.overflow-auto::-webkit-scrollbar {
+  height: 6px;
+}
+
+.overflow-auto::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.overflow-auto::-webkit-scrollbar-thumb {
+  background: #e4e4e7;
+  border-radius: 3px;
+}
+
+.overflow-auto::-webkit-scrollbar-thumb:hover {
+  background: #d4d4d8;
+}
+
 /* Speech-bubble style for the index `#user_badge` */
 #user_badge {
   position: relative;

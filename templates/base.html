@@ -3,7 +3,24 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet" />
     <title>{% block title %}Easyscout{% endblock %}</title>
+    <meta name="description" content="{% block description %}AI-powered basketball scouting reports. Generate coach-ready reports on demand.{% endblock %}" />
+    
+    <!-- Open Graph / Social Media -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="{% block og_title %}Easyscout - AI Basketball Scouting{% endblock %}" />
+    <meta property="og:description" content="{% block og_description %}Generate professional basketball scouting reports instantly with AI.{% endblock %}" />
+    <meta property="og:url" content="{{ request.url }}" />
+    <!-- Add your logo/image: <meta property="og:image" content="https://yourdomain.com/static/og-image.png" /> -->
+    
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="{% block twitter_title %}Easyscout - AI Basketball Scouting{% endblock %}" />
+    <meta name="twitter:description" content="{% block twitter_description %}Generate professional basketball scouting reports instantly.{% endblock %}" />
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
 
     <!-- Tailwind (MVP) -->
     <script src="https://cdn.tailwindcss.com"></script>
