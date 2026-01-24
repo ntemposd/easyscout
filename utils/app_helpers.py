@@ -41,9 +41,15 @@ try:
     _POSTHOG_HOST = os.getenv("POSTHOG_HOST") or "https://app.posthog.com"
     if _POSTHOG_API_KEY:
         # Prefer explicit keyword `project_api_key` for compatibility
-        _analytics_client = Posthog(project_api_key=_POSTHOG_API_KEY, host=_POSTHOG_HOST)
+        # flush_interval in milliseconds; set to 0 for immediate flush in production
+        flush_interval = 0 if os.getenv("ENV") == "production" else 5000
+        _analytics_client = Posthog(
+            project_api_key=_POSTHOG_API_KEY, 
+            host=_POSTHOG_HOST,
+            flush_interval=flush_interval
+        )
         try:
-            logging.getLogger("posthog").info("PostHog analytics initialized")
+            logging.getLogger("posthog").info("PostHog analytics initialized (flush_interval=%dms)", flush_interval)
         except Exception:
             pass
     else:
