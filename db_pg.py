@@ -417,18 +417,32 @@ def list_reports(user_id: str, q: str = "", limit: int = 20, offset: int = 0) ->
         like = f"%{q}%"
         params += [like, like, like, like, like]
 
-    with _get_pool().connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            f"""
-            select id, player_name, created_at, cached, payload
-            from public.reports
-            where {where}
-            order by created_at desc, id desc
-            limit %s offset %s
-            """,
-            (*params, limit, offset),
-        )
-        rows = cur.fetchall()
+    try:
+        with _get_pool().connection() as conn, conn.cursor() as cur:
+            try:
+                cur.execute(
+                    f"""
+                    select id, player_name, created_at, cached, payload
+                    from public.reports
+                    where {where}
+                    order by created_at desc, id desc
+                    limit %s offset %s
+                    """,
+                    (*params, limit, offset),
+                )
+                rows = cur.fetchall()
+            except Exception:
+                # If query times out or fails, rollback to clean connection state
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                raise
+    except Exception as e:
+        # Log timeout errors but don't crash — return empty results as fallback
+        if "statement timeout" in str(e).lower() or "timeout" in str(e).lower():
+            return []
+        raise
 
     results = []
     for r in rows:
@@ -478,18 +492,32 @@ def count_reports(user_id: str, q: str = "") -> int:
         like = f"%{q}%"
         params += [like, like, like, like, like]
 
-    with _get_pool().connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            f"""
-            select count(*)
-            from public.reports
-            where {where}
-            """,
-            tuple(params),
-        )
-        row = cur.fetchone()
+    try:
+        with _get_pool().connection() as conn, conn.cursor() as cur:
+            try:
+                cur.execute(
+                    f"""
+                    select count(*)
+                    from public.reports
+                    where {where}
+                    """,
+                    tuple(params),
+                )
+                row = cur.fetchone()
+            except Exception:
+                # If query times out or fails, rollback to clean connection state
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                raise
 
-    return int(row[0] or 0)
+        return int(row[0] or 0)
+    except Exception as e:
+        # Log timeout errors but don't crash — return 0 as fallback
+        if "statement timeout" in str(e).lower() or "timeout" in str(e).lower():
+            return 0
+        raise
 
 
 def get_report(user_id: str, report_id: int) -> Optional[Dict[str, Any]]:

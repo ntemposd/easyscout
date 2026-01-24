@@ -131,6 +131,11 @@ def favicon():
 def not_found(e):
     return render_template("404.html"), 404
 
+# 405 handler: method not allowed (typically bot probing) — return 405, not 500
+@app.errorhandler(405)
+def method_not_allowed(e):
+    return jsonify({"error": "method not allowed"}), 405
+
 # Development-friendly global error handler: log exception and return JSON
 @app.errorhandler(Exception)
 def _handle_exception(e):
