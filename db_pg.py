@@ -17,7 +17,31 @@ def _get_pool() -> ConnectionPool:
     global _pool
     if _pool is None:
         dsn = os.environ["DATABASE_URL"]
-        _pool = ConnectionPool(dsn, min_size=1, max_size=5, timeout=10)
+        
+        # Convert to Transaction mode (port 6543) to avoid Session mode client limits
+        if "pooler.supabase.com:5432" in dsn:
+            dsn = dsn.replace("pooler.supabase.com:5432", "pooler.supabase.com:6543")
+        
+        # Add connect_timeout to DSN to prevent DNS/SSL hangs
+        if "?" in dsn:
+            dsn += "&connect_timeout=5"
+        else:
+            dsn += "?connect_timeout=5"
+        
+        _pool = ConnectionPool(
+            dsn,
+            min_size=1,
+            max_size=10,
+            timeout=10,
+            max_lifetime=180,
+            max_idle=60,
+            reconnect_timeout=15,
+            kwargs={
+                "options": "-c statement_timeout=30s",
+                # Disable prepared statement caching to avoid conflicts with dynamic SQL
+                "prepare_threshold": None,
+            },
+        )
     return _pool
 
 
@@ -34,6 +58,21 @@ def _ensure_user_row(cur, user_id: str) -> None:
         on conflict (user_id) do nothing
         """,
         (user_id,),
+    )
+
+
+def initialize_user_with_welcome_credits(user_id: str) -> int:
+    """
+    Grant 3 welcome credits to a new user (one-time only).
+    Returns the new balance after granting credits.
+    Uses idempotent source_id so repeated calls won't double-grant.
+    """
+    return refund_credits(
+        user_id,
+        3,
+        reason="welcome_bonus",
+        source_type="onboarding",
+        source_id=f"welcome_bonus_{user_id}",
     )
 
 
@@ -298,6 +337,41 @@ def upsert_report(
         return int(rid)
 
 
+def update_report_by_id(
+    user_id: str,
+    report_id: int,
+    player_name: str,
+    report_md: str,
+    payload: Dict[str, Any],
+    cached: bool,
+) -> int:
+    """
+    Updates an existing report by ID (for regenerations).
+    Ensures the report belongs to the user before updating.
+    """
+    p_text = json.dumps(payload or {}, ensure_ascii=False, default=str)
+
+    with _get_pool().connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            update public.reports
+            set player_name = %s,
+                report_md = %s,
+                payload = %s::jsonb,
+                cached = %s,
+                created_at = now()
+            where id = %s and user_id = %s
+            returning id
+            """,
+            (player_name, report_md, p_text, bool(cached), report_id, user_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise ValueError(f"Report {report_id} not found or does not belong to user {user_id}")
+        conn.commit()
+        return int(row[0])
+
+
 # Backwards-compatible name (your app.py uses insert_report)
 def insert_report(
     user_id: str,
@@ -317,12 +391,19 @@ def insert_report(
     )
 
 
-def list_reports(user_id: str, q: str = "", limit: int = 20) -> List[Dict[str, Any]]:
+def list_reports(user_id: str, q: str = "", limit: int = 20, offset: int = 0) -> List[Dict[str, Any]]:
     q = (q or "").strip()
-    limit = max(1, min(int(limit or 20), 100))
+    # Allow larger result sets; capped to avoid unbounded queries
+    limit = max(1, min(int(limit or 20), 1000))
+    offset = max(0, int(offset or 0))
 
-    where = "user_id = %s"
-    params: List[Any] = [user_id]
+    # Special case: "*" means search ALL users' reports (for global suggestions)
+    if user_id == "*":
+        where = "1=1"  # No user_id filter
+        params: List[Any] = []
+    else:
+        where = "user_id = %s"
+        params: List[Any] = [user_id]
 
     if q:
         # Search across key fields: player, league, team, position
@@ -343,9 +424,9 @@ def list_reports(user_id: str, q: str = "", limit: int = 20) -> List[Dict[str, A
             from public.reports
             where {where}
             order by created_at desc, id desc
-            limit %s
+            limit %s offset %s
             """,
-            (*params, limit),
+            (*params, limit, offset),
         )
         rows = cur.fetchall()
 
@@ -377,6 +458,38 @@ def list_reports(user_id: str, q: str = "", limit: int = 20) -> List[Dict[str, A
         })
     
     return results
+
+
+def count_reports(user_id: str, q: str = "") -> int:
+    """Return total reports matching user/q for pagination and badge counts."""
+    q = (q or "").strip()
+
+    where = "user_id = %s"
+    params: List[Any] = [user_id]
+
+    if q:
+        where += """ and (
+            player_name ilike %s 
+            or (payload->>'league') ilike %s
+            or (payload->'info_fields'->>'League') ilike %s
+            or (payload->'info_fields'->>'Team') ilike %s
+            or (payload->'info_fields'->>'Position') ilike %s
+        )"""
+        like = f"%{q}%"
+        params += [like, like, like, like, like]
+
+    with _get_pool().connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+            select count(*)
+            from public.reports
+            where {where}
+            """,
+            tuple(params),
+        )
+        row = cur.fetchone()
+
+    return int(row[0] or 0)
 
 
 def get_report(user_id: str, report_id: int) -> Optional[Dict[str, Any]]:
@@ -414,3 +527,217 @@ def get_report(user_id: str, report_id: int) -> Optional[Dict[str, Any]]:
         "cached": bool(cached),
         "created_at": created_at.isoformat() if created_at else None,
     }
+
+
+def get_report_by_id(report_id: int) -> Optional[Dict[str, Any]]:
+    """Fetch a report by ID without user_id filtering (for cross-user operations like accepting suggestions)"""
+    with _get_pool().connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select payload, report_md, player_name, created_at, cached, user_id
+            from public.reports
+            where id = %s
+            """,
+            (int(report_id),),
+        )
+        row = cur.fetchone()
+
+    if not row:
+        return None
+
+    payload, report_md, player_name, created_at, cached, source_user_id = row
+
+    # If payload exists (jsonb), return it as the main object
+    if payload:
+        # Ensure the consumer has access to the markdown too
+        if isinstance(payload, dict) and "report_md" not in payload:
+            payload["report_md"] = report_md or ""
+        if isinstance(payload, dict) and "cached" not in payload:
+            payload["cached"] = bool(cached)
+        if isinstance(payload, dict) and "created_at" not in payload and created_at:
+            payload["created_at"] = created_at.isoformat()
+        if isinstance(payload, dict) and "source_user_id" not in payload:
+            payload["source_user_id"] = source_user_id
+        return payload
+
+    # fallback: minimal
+    return {
+        "player": player_name,
+        "report_md": report_md or "",
+        "cached": bool(cached),
+        "created_at": created_at.isoformat() if created_at else None,
+    }
+
+
+# ----------------------------
+# Cost Tracking
+# ----------------------------
+
+
+def insert_cost_tracking(
+    user_id: str,
+    report_id: int,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    estimated_cost: float,
+    player_name: str | None = None,
+) -> None:
+    """Record cost tracking data for a report generation.
+    
+    Args:
+        user_id: User who generated the report
+        report_id: ID of the generated report
+        model: Model name used for generation
+        input_tokens: Number of input tokens used
+        output_tokens: Number of output tokens used
+        estimated_cost: Calculated cost in dollars
+    """
+    with _get_pool().connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO public.cost_tracking (
+                user_id,
+                report_id,
+                model,
+                input_tokens,
+                output_tokens,
+                estimated_cost,
+                player_name,
+                timestamp
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+            """,
+            (
+                user_id,
+                report_id,
+                model,
+                input_tokens,
+                output_tokens,
+                estimated_cost,
+                player_name or "",
+            ),
+        )
+        conn.commit()
+
+
+def get_cost_stats(user_id: str = None, limit: int = 100) -> List[Dict[str, Any]]:
+    """Retrieve cost tracking statistics.
+    
+    Args:
+        user_id: Optional user_id to filter by specific user
+        limit: Maximum number of records to return
+        
+    Returns:
+        List of cost tracking records
+    """
+    with _get_pool().connection() as conn, conn.cursor() as cur:
+        if user_id:
+            cur.execute(
+                """
+                SELECT 
+                    id,
+                    user_id,
+                    report_id,
+                    model,
+                    input_tokens,
+                    output_tokens,
+                    estimated_cost,
+                    player_name,
+                    timestamp
+                FROM public.cost_tracking
+                WHERE user_id = %s
+                ORDER BY timestamp DESC
+                LIMIT %s
+                """,
+                (user_id, limit),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT 
+                    id,
+                    user_id,
+                    report_id,
+                    model,
+                    input_tokens,
+                    output_tokens,
+                    estimated_cost,
+                    player_name,
+                    timestamp
+                FROM public.cost_tracking
+                ORDER BY timestamp DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+        
+        rows = cur.fetchall()
+        
+        return [
+            {
+                "id": row[0],
+                "user_id": row[1],
+                "report_id": row[2],
+                "model": row[3],
+                "input_tokens": row[4],
+                "output_tokens": row[5],
+                "estimated_cost": float(row[6]),
+                "player_name": row[7] or "",
+                "timestamp": row[8].isoformat() if row[8] else None,
+            }
+            for row in rows
+        ]
+
+
+def get_cost_summary(user_id: str = None) -> Dict[str, Any]:
+    """Get aggregated cost statistics.
+    
+    Args:
+        user_id: Optional user_id to filter by specific user
+        
+    Returns:
+        Dict with total cost, token counts, and report count
+    """
+    with _get_pool().connection() as conn, conn.cursor() as cur:
+        if user_id:
+            cur.execute(
+                """
+                SELECT 
+                    COUNT(*) as report_count,
+                    SUM(input_tokens) as total_input_tokens,
+                    SUM(output_tokens) as total_output_tokens,
+                    SUM(estimated_cost) as total_cost
+                FROM public.cost_tracking
+                WHERE user_id = %s
+                """,
+                (user_id,),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT 
+                    COUNT(*) as report_count,
+                    SUM(input_tokens) as total_input_tokens,
+                    SUM(output_tokens) as total_output_tokens,
+                    SUM(estimated_cost) as total_cost
+                FROM public.cost_tracking
+                """
+            )
+        
+        row = cur.fetchone()
+        
+        if not row:
+            return {
+                "report_count": 0,
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+                "total_cost": 0.0,
+            }
+        
+        return {
+            "report_count": int(row[0]) if row[0] else 0,
+            "total_input_tokens": int(row[1]) if row[1] else 0,
+            "total_output_tokens": int(row[2]) if row[2] else 0,
+            "total_cost": float(row[3]) if row[3] else 0.0,
+        }

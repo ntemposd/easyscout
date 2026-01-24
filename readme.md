@@ -193,7 +193,7 @@ fetch('/api/dev/grant_credits', {
     'Authorization': 'Bearer ' + token, 
     'Content-Type': 'application/json' 
   },
-  body: JSON.stringify({ amount: 100 })
+  body: JSON.stringify({ amount: 10 })
 }).then(r => r.json()).then(console.log);
 ```
 
@@ -237,6 +237,46 @@ Database constraint on `(user_id, query_key)` ensures:
 - **SQL Injection Safe** — Parameterized queries only
 - **Secret Management** — Environment variables + Render secret files
 - **Error Tracking** — Sentry integration (optional)
+
+---
+
+## Email (Mailjet SMTP)
+
+- Auth emails (magic links): configure Supabase to use Mailjet SMTP so Supabase sends links from your domain.
+- App emails (notifications): use [utils/email.py](utils/email.py) to send transactional messages via Mailjet SMTP.
+
+### Configure Supabase SMTP to use Mailjet
+- Verify your domain/sender in Mailjet (add the DKIM CNAMEs and SPF `v=spf1 include:spf.mailjet.com ~all`).
+- Create/gather Mailjet SMTP creds (Mailjet API key = username, secret key = password).
+- In Supabase → Project Settings → Authentication → Email → SMTP Settings:
+   - Host: `in-v3.mailjet.com`
+   - Port: `587` (TLS) or `465` (SSL)
+   - Username: Mailjet API key
+   - Password: Mailjet secret key
+   - Sender: a verified address, e.g., `no-reply@yourdomain.com`
+- Set the magic link redirect to `/auth/callback` on your domain.
+
+### Configure server-side Mailjet
+Set these environment variables (see [.env.example](.env.example)):
+- `MAILJET_API_KEY`
+- `MAILJET_SECRET_KEY`
+- `MAILJET_SENDER_EMAIL`
+- Optional override: `MAILJET_SMTP_HOST` (default `in-v3.mailjet.com`), `MAILJET_SMTP_PORT` (default `587`).
+
+Dev-only test endpoint (requires `DEV_TOOLS=1`):
+
+```bash
+curl -X POST http://localhost:5000/api/dev/send_email \
+   -H "Authorization: Bearer <token>" \
+   -H "Content-Type: application/json" \
+   -d '{
+      "to": "you@recipient.com",
+      "subject": "Mailjet Test",
+      "text": "Hello from Easyscout via Mailjet!"
+   }'
+```
+
+This uses `send_email()` from [utils/email.py](utils/email.py).
 
 ---
 

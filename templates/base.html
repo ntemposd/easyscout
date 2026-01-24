@@ -27,12 +27,14 @@
     <link rel="stylesheet" href="/static/app.css">
     
     <script>
+      // Shared list of paths exempt from auth redirects
+      window.AUTH_EXEMPT_PATHS = ["/auth/callback", "/billing/success", "/app", "/privacy"];
+      
       // Synchronous pre-check: if a Supabase session token exists in localStorage,
       // redirect logged-in users away from public pages before rendering.
       try {
         const path = window.location.pathname || "/";
-        const exempt = ["/auth/callback", "/billing/success", "/app"];
-        if (!exempt.includes(path)) {
+        if (!window.AUTH_EXEMPT_PATHS.includes(path)) {
           for (let i = 0; i < localStorage.length; i++) {
             const k = localStorage.key(i) || "";
             if (k.toLowerCase().includes('supabase') || k.toLowerCase().startsWith('sb')) {
@@ -126,9 +128,7 @@
         );
       }
     </script>
-    <script>
-      (function(){ try{ console.log('base loaded'); }catch(e){} })();
-    </script>
+    <!-- removed console log for base load -->
 
     <script>
       // Generate and persist anonymous user ID for pre-login tracking
@@ -136,12 +136,12 @@
         if (!localStorage.getItem('anonUserId')) {
           localStorage.setItem('anonUserId', crypto.randomUUID());
         }
-        window.getDistinctId = function() {
+        window.getDistinctId = async function() {
           // Use authenticated user ID if available, else anonymous ID
           try {
-            const session = window.sb?.auth?.getSession?.();
-            if (session?.data?.session?.user?.id) {
-              return session.data.session.user.id;
+            const { data } = await window.sb?.auth?.getSession?.();
+            if (data?.session?.user?.id) {
+              return data.session.user.id;
             }
           } catch (e) {}
           return localStorage.getItem('anonUserId') || 'unknown';
@@ -153,6 +153,7 @@
         try {
           const s = await window.sb?.auth?.getSession?.();
           const token = s?.data?.session?.access_token;
+          const distinctId = await window.getDistinctId();
           await fetch('/api/analytics', {
             method: 'POST',
             headers: {
@@ -163,7 +164,7 @@
               event: eventName, 
               properties: { 
                 ...(properties || {}),
-                distinct_id: window.getDistinctId()
+                distinct_id: distinctId
               } 
             }),
           });
@@ -196,6 +197,47 @@
           // swallow errors
         }
       });
+
+      // Link anonymous and authenticated identities when user logs in (once only)
+      (async function() {
+        try {
+          if (!window.sb || !window.sb.auth) return;
+          
+          // Check current session on page load and alias if needed
+          const { data } = await window.sb.auth.getSession();
+          if (data?.session?.user?.id) {
+            const anonId = localStorage.getItem('anonUserId');
+            const userId = data.session.user.id;
+            const aliasKey = `aliased_${userId}`;
+            
+            // Only alias once per user - check if we've already done it
+            if (anonId && anonId !== userId && !localStorage.getItem(aliasKey)) {
+              try {
+                await fetch('/api/analytics', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${data.session.access_token}`
+                  },
+                  body: JSON.stringify({
+                    event: '$alias',
+                    properties: {
+                      distinct_id: userId,
+                      previous_id: anonId
+                    }
+                  })
+                });
+                // Mark this user as aliased across tabs
+                localStorage.setItem(aliasKey, 'true');
+              } catch (e) {
+                // swallow alias errors
+              }
+            }
+          }
+        } catch (e) {
+          // swallow errors
+        }
+      })();
     </script>
 
     <script>
@@ -226,7 +268,7 @@
 
     {% block scripts %}{% endblock %}
 
-    <script src="/static/app.js" onload="console.log('app.js loaded')" onerror="console.error('app.js failed to load')"></script>
+    <script src="/static/app.js?v=20250123-1"></script>
     <script>
       (function() {
         // Hide navbar on scroll down, show on scroll up.
@@ -323,7 +365,7 @@
             if (!userBadge) return;
             // Don't update badge if it already has content with credits
             // (let index.html handle it with its own credit-aware logic)
-            if (userBadge.innerHTML && userBadge.innerHTML.includes('credits')) {
+            if (userBadge.querySelector('#topup_link')) {
               return;
             }
             const email = session?.user?.email || null;
@@ -353,8 +395,7 @@
 
         // Initial check + lock logged-in users to `/app` (exempting some pages)
         function shouldExemptPath(path) {
-          const exempt = ["/auth/callback", "/billing/success"];
-          return exempt.some(e => path === e || path.startsWith(e));
+          return window.AUTH_EXEMPT_PATHS.some(e => path === e || path.startsWith(e));
         }
 
         window.sb.auth.getSession().then(({ data }) => {

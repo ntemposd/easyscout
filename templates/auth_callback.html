@@ -59,7 +59,10 @@
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 event: 'user_logged_in',
-                properties: { distinct_id: userId }
+                properties: { 
+                  distinct_id: userId,
+                  provider: data?.session?.user?.app_metadata?.provider || 'unknown'
+                }
               })
             }).catch(() => {});
           }

@@ -58,6 +58,14 @@
         return;
       }
 
+      // Track purchase
+      try {
+        window.trackClientEvent?.('credits_purchased', {
+          session_id: session_id,
+          credits: j.credits || 0
+        });
+      } catch (e) {}
+
       msg.textContent = `Credits updated! New balance: ${j.credits}. Redirecting…`;
       setTimeout(() => window.location.replace("/app"), 900);
     } catch (e) {

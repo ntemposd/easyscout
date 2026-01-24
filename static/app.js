@@ -21,6 +21,85 @@ const sb = window.sb;
       }
     }
   };
+    // ---------- Reports sidebar (library) ----------
+    async function loadReports(q = "") {
+      const listEl = $("reports_list");
+      const countEl = $("reports_count");
+      if (!listEl) return;
+
+      try {
+        listEl.innerHTML = '<div class="text-sm text-zinc-500">Loading…</div>';
+        if (countEl) countEl.textContent = "0";
+
+        const token = await (window.getAccessToken ? window.getAccessToken() : null);
+        const res = await fetch(`/api/reports?q=${encodeURIComponent(q || "")}&limit=500`, {
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        });
+
+        if (res.status === 401) {
+          listEl.innerHTML = '<div class="text-sm text-red-600">Please log in to view your reports.</div>';
+          if (countEl) countEl.textContent = "0";
+          return;
+        }
+
+        const data = await res.json().catch(() => ({}));
+        const items = Array.isArray(data.items) ? data.items : [];
+        const total = Number.isFinite(data.total) ? data.total : items.length;
+
+        if (countEl) countEl.textContent = `${total ?? 0}`;
+
+        if (!items.length) {
+          listEl.innerHTML = '<div class="text-sm text-zinc-500">No reports yet.</div>';
+          return;
+        }
+
+        listEl.innerHTML = items
+          .map((item) => {
+            const player = escapeHtml(item.player_name || "Unknown");
+            const position = escapeHtml(item.position || "Unknown");
+            return `
+              <button data-report-id="${item.id}" class="w-full text-left p-3 rounded-lg border border-zinc-200 hover:border-[#6FD06B] hover:bg-[#F7FBF8] transition flex flex-col gap-1">
+                <span class="text-sm font-semibold text-zinc-900">${player}</span>
+                <span class="text-xs text-zinc-500">${position}</span>
+              </button>
+            `;
+          })
+          .join("");
+      } catch (err) {
+        console.error("loadReports failed", err);
+        listEl.innerHTML = '<div class="text-sm text-red-600">Failed to load reports.</div>';
+      }
+    }
+
+    async function openReportById(reportId) {
+      if (!reportId) return;
+      try {
+        const token = await (window.getAccessToken ? window.getAccessToken() : null);
+        const res = await fetch(`/api/reports/${reportId}`, {
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `Failed to load report (${res.status})`);
+
+        $("out_html").innerHTML = renderReport(data);
+        window.enableTableDragScroll?.();
+        setText("badge", "");
+        setText("status", "");
+
+        // Store regenerate target
+        window._regenerateReportId = data.report_id || data.id || reportId;
+      } catch (err) {
+        console.error("openReportById failed", err);
+        setText("err", err?.message || String(err));
+      }
+    }
+
 
   const on = (id, event, handler) => {
     const el = $(id);
@@ -403,18 +482,24 @@ const sb = window.sb;
       ? `<div class="text-sm text-zinc-700">${escapeHtml(finalVerdict)}</div>`
       : "";
 
-    // Format the generated date
+    // Format the generated date and time
     let dateBadge = "";
     if (payload.created_at) {
       try {
         const d = new Date(payload.created_at);
         const dateStr = d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-        dateBadge = `<div class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-zinc-100 text-zinc-700">Generated ${dateStr}</div>`;
+        const timeStr = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+        dateBadge = `<div class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-zinc-100 text-zinc-700">Generated ${dateStr} ${timeStr}</div>`;
       } catch (e) {
         // Fallback if date parsing fails
         dateBadge = `<div class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-zinc-100 text-zinc-700">Generated ${payload.created_at.split('T')[0]}</div>`;
       }
     }
+
+    // Store player/team for regenerate action
+    const playerName = player;
+    const playerTeam = cleanValue(infoFields["Team"] || payload.team || "", "");
+    const reportId = payload.report_id || payload.library_id || "";
 
     return `
       <div class="space-y-4">
@@ -422,6 +507,12 @@ const sb = window.sb;
           <div class="text-2xl font-bold text-zinc-900">${escapeHtml(title)}</div>
           ${dateBadge}
           ${verdictBlock}
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button id="regenerate_report_btn" class="text-sm px-3 py-1 rounded-md border border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-medium transition-colors" data-player="${escapeHtml(playerName)}" data-team="${escapeHtml(playerTeam)}" data-report-id="${escapeHtml(reportId)}">
+            ✨ Regenerate
+          </button>
         </div>
 
         <div class="grid sm:grid-cols-2 gap-4">
@@ -453,10 +544,48 @@ const sb = window.sb;
 
   // ---------- App initialization ----------
   function initApp() {
-    console.log('initApp');
     // prevent page reload on submit
     const form = $("scout-form");
     if (form) form.addEventListener("submit", (e) => e.preventDefault());
+
+    // Handle regenerate button clicks with event delegation
+    const outHtml = $("out_html");
+    if (outHtml) {
+      outHtml.addEventListener("click", (e) => {
+        const btn = e.target.closest("#regenerate_report_btn");
+        if (!btn) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        try {
+          // Extract player, team, and report_id from button data attributes
+          const player = btn.getAttribute("data-player");
+          const team = btn.getAttribute("data-team");
+          const reportId = btn.getAttribute("data-report-id");
+
+          if (!player) {
+            console.warn("Regenerate button missing player data");
+            return;
+          }
+
+          // Store report_id for the regeneration request
+          window._regenerateReportId = reportId || null;
+
+          // Fill the form with these values
+          if ($("player")) $("player").value = player;
+          if ($("team")) $("team").value = team;
+
+          // Check the refresh checkbox to force regeneration
+          if ($("refresh")) $("refresh").checked = true;
+
+          // Trigger the run button click to start generation
+          const runBtn = $("run");
+          if (runBtn) runBtn.click();
+        } catch (err) {
+          console.error("Error handling regenerate button:", err);
+        }
+      });
+    }
 
     // Fill example
     on("example", "click", () => {
@@ -483,7 +612,6 @@ const sb = window.sb;
     on("run", "click", async () => {
       if (window._scoutRunning) return; // prevent duplicate concurrent runs
       window._scoutRunning = true;
-      console.log('run clicked');
       try {
         setText("err");
         setText("badge");
@@ -492,7 +620,13 @@ const sb = window.sb;
       }
 
       const player = $("player").value.trim();
-      if (!player) return setText("err", "Player is required.");
+      if (!player) {
+        setText("err", "Player is required.");
+        window._scoutRunning = false;
+        $("run").disabled = false;
+        setScoutLoader(false);
+        return;
+      }
 
       const payload = {
         player,
@@ -503,6 +637,12 @@ const sb = window.sb;
         refresh: !!$("refresh")?.checked,
       };
 
+      // If regenerating an existing report, include its ID so the backend updates it
+      if (window._regenerateReportId) {
+        payload.report_id = window._regenerateReportId;
+        window._regenerateReportId = null; // Clear it after use
+      }
+
       setText("status", "Working…");
       $("run").disabled = true;
       // Clear the report pane completely before generating new report
@@ -511,9 +651,6 @@ const sb = window.sb;
 
       try {
         const token = await (window.getAccessToken ? window.getAccessToken() : null);
-        console.log('got token', !!token);
-
-        console.log('scout payload', payload);
         const res = await fetch("/api/scout", {
           method: "POST",
           headers: {
@@ -522,39 +659,110 @@ const sb = window.sb;
           },
           body: JSON.stringify(payload),
         });
-        console.log('scout response status', res.status);
         const data = await res.json().catch(() => ({}));
-        console.log('scout response json', data);
         if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
 
         // If server suggests a close cached match, show inline suggestion UI
         if (data && data.match_suggestion) {
           try {
             const ms = data.match_suggestion;
-            // Show inline suggestion box if present in DOM
+            
+            // Auto-accept exact matches (score=100) without showing modal
+            if (ms.score === 100) {
+              try {
+                // Record alias mapping
+                const tokenAlias = await (window.getAccessToken ? window.getAccessToken() : null);
+                await fetch('/api/alias', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    ...(tokenAlias ? { Authorization: `Bearer ${tokenAlias}` } : {}),
+                  },
+                  body: JSON.stringify({ queried_player: player, player: ms.player_name }),
+                }).catch((err) => { console.warn('alias save failed', err); });
+              } catch (err) {
+                console.warn('alias endpoint call failed', err);
+              }
+              
+              // Accept exact match automatically
+              setText("status", "Loading exact match…");
+              const tokenAccept = await (window.getAccessToken ? window.getAccessToken() : null);
+              const rAccept = await fetch('/api/scout', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(tokenAccept ? { Authorization: `Bearer ${tokenAccept}` } : {}),
+                },
+                body: JSON.stringify({
+                  player: player,
+                  team: $("team")?.value?.trim() || "",
+                  league: $("league")?.value?.trim() || "",
+                  season: $("season")?.value?.trim() || "",
+                  use_web: false,
+                  refresh: false,
+                  accept_suggestion: true,
+                  suggestion_report_id: ms.report_id,
+                }),
+              });
+              
+              const acceptResult = await rAccept.json().catch(() => ({}));
+              if (!rAccept.ok) {
+                throw new Error(acceptResult.error || `Failed to accept suggestion (${rAccept.status})`);
+              }
+              
+              // Mark as from suggestion for clear messaging
+              acceptResult.from_suggestion = true;
+              
+              // Display the result
+              $("out_html").innerHTML = renderReport(acceptResult);
+              window.enableTableDragScroll?.();
+              setText("badge", acceptResult.cached ? "Report Loaded from Library" : "New Report Generated");
+              setText("status", "");
+              
+              // Update credits display
+              if (typeof acceptResult.credits_remaining === "number") {
+                try {
+                  window.updateCreditsDisplay?.(acceptResult.credits_remaining);
+                } catch (err) {
+                  console.warn('Failed to update credits display', err);
+                }
+              }
+              
+              window.loadReports?.();
+              return;
+            }
+            
+            // Show inline suggestion box for non-exact matches
             const box = $("suggestion_box");
             const text = $("suggestion_text");
             if (box && text) {
-              text.textContent = `Did you mean "${ms.player_name}"?`;
+              // Build suggestion text with team/league context
+              let suggestionText = `Did you mean ${ms.player_name}`;
+              if (ms.team) {
+                suggestionText += ` (${ms.team}`;
+                if (ms.league) suggestionText += `, ${ms.league}`;
+                suggestionText += ")";
+              } else if (ms.league) {
+                suggestionText += ` (${ms.league})`;
+              }
+              suggestionText += "?";
+              text.textContent = suggestionText;
               box.classList.remove('hidden');
 
-              // create a Promise that resolves to 'accept'|'reject'|'dismiss'
+              // create a Promise that resolves to 'accept'|'reject'
               const choice = await new Promise((resolve) => {
                 const onAccept = async () => { resolve('accept'); cleanup(); };
                 const onReject = async () => { resolve('reject'); cleanup(); };
-                const onClose = async () => { resolve('dismiss'); cleanup(); };
 
                 function cleanup() {
                   try {
                     $('suggest_accept')?.removeEventListener('click', onAccept);
                     $('suggest_reject')?.removeEventListener('click', onReject);
-                    $('suggest_close')?.removeEventListener('click', onClose);
                   } catch (e) {}
                 }
 
                 $('suggest_accept')?.addEventListener('click', onAccept);
                 $('suggest_reject')?.addEventListener('click', onReject);
-                $('suggest_close')?.addEventListener('click', onClose);
               });
 
               box.classList.add('hidden');
@@ -574,47 +782,60 @@ const sb = window.sb;
                 } catch (err) {
                   console.warn('alias endpoint call failed', err);
                 }
-                // If server provided the suggested report payload inline, use it
-                // to avoid a separate fetch (and possible 404). Otherwise fetch.
-                let payload2 = null;
-                if (ms && ms.report_payload) {
-                  payload2 = ms.report_payload;
-                } else {
-                  const token2 = await (window.getAccessToken ? window.getAccessToken() : null);
-                  const r2 = await fetch(`/api/reports/${ms.report_id}`, {
+                
+                // Accept suggestion by calling /api/scout with accept_suggestion=true
+                // This will charge 1 credit but skip LLM and reuse the cached report
+                try {
+                  setText("status", "Accepting suggestion…");
+                  const tokenAccept = await (window.getAccessToken ? window.getAccessToken() : null);
+                  const rAccept = await fetch('/api/scout', {
+                    method: 'POST',
                     headers: {
-                      ...(token2 ? { Authorization: `Bearer ${token2}` } : {}),
+                      'Content-Type': 'application/json',
+                      ...(tokenAccept ? { Authorization: `Bearer ${tokenAccept}` } : {}),
                     },
+                    body: JSON.stringify({
+                      player: player,
+                      team: $("team")?.value?.trim() || "",
+                      league: $("league")?.value?.trim() || "",
+                      season: $("season")?.value?.trim() || "",
+                      use_web: false,
+                      refresh: false,
+                      accept_suggestion: true,
+                      suggestion_report_id: ms.report_id,
+                    }),
                   });
-                  payload2 = await r2.json().catch(() => ({}));
-                  if (!r2.ok) throw new Error(payload2.error || `Failed to load suggested report (${r2.status})`);
-                }
-                // Ensure HTML exists for suggested payloads; request server render when missing.
-                if ((!payload2.report_html || payload2.report_html === "") && payload2.report_md) {
-                  try {
-                    const tokenR = await (window.getAccessToken ? window.getAccessToken() : null);
-                    const rr = await fetch('/api/render_md', {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        ...(tokenR ? { Authorization: `Bearer ${tokenR}` } : {}),
-                      },
-                      body: JSON.stringify({ md: payload2.report_md }),
-                    });
-                    if (rr.ok) {
-                      const jr = await rr.json().catch(() => ({}));
-                      if (jr && jr.html) payload2.report_html = jr.html;
-                    }
-                  } catch (err) {
-                    console.warn('render_md call failed for suggestion', err);
+                  
+                  const acceptResult = await rAccept.json().catch(() => ({}));
+                  if (!rAccept.ok) {
+                    throw new Error(acceptResult.error || `Failed to accept suggestion (${rAccept.status})`);
                   }
+                  
+                  // Mark as from suggestion for clear messaging
+                  acceptResult.from_suggestion = true;
+                  
+                  // Display the result (already includes HTML, credit info, etc.)
+                  $("out_html").innerHTML = renderReport(acceptResult);
+                  window.enableTableDragScroll?.();
+                  setText("badge", "Report Loaded from Library");
+                  setText("status", "");
+                  
+                  // Update credits display
+                  if (typeof acceptResult.credits_remaining === "number") {
+                    try {
+                      window.updateCreditsDisplay?.(acceptResult.credits_remaining);
+                    } catch (err) {
+                      console.warn('Failed to update credits display', err);
+                    }
+                  }
+                  
+                  window.loadReports?.();
+                  return;
+                } catch (err) {
+                  setText("err", err?.message || String(err));
+                  setText("status");
+                  console.error('Error accepting suggestion:', err);
                 }
-
-                $("out_html").innerHTML = window.renderReport ? window.renderReport(payload2) : `<pre>${escapeHtml(payload2.report_md || "")}</pre>`;
-                window.enableTableDragScroll?.();
-                setText("badge", "📚 Loaded suggested report");
-                setText("status", "Loaded from library");
-                window.loadReports?.();
                 return;
               }
 
@@ -635,18 +856,19 @@ const sb = window.sb;
                 // replace data with new generation result
                 data = data2;
               }
-
-              // dismiss: fall through to render the original response (likely a suggestion notice)
             }
           } catch (err) {
             console.error('Error handling match_suggestion', err);
           }
         }
 
-        // Update credits badge if server returned it
+        // Update credits display if server returned it
         if (typeof data.credits_remaining === "number") {
-          const el = $("credits_badge");
-          if (el) el.textContent = String(data.credits_remaining);
+          try {
+            window.updateCreditsDisplay?.(data.credits_remaining);
+          } catch (err) {
+            console.warn('Failed to update credits display', err);
+          }
         }
 
         // keep markdown hidden for debugging
@@ -701,11 +923,46 @@ const sb = window.sb;
         // Enable drag-to-scroll on report tables
         window.enableTableDragScroll?.();
 
-        // ✅ refresh sidebar list after a successful save/generate
-        window.loadReports?.();
+        // Track report_rendered (always, with source indicating where it came from)
+        try {
+          const source = data.cached ? "cache" : "generated";
+          window.trackClientEvent?.("report_rendered", {
+            player_name: data.player || data.player_name || "Unknown",
+            source: source,
+            success: true
+          });
+        } catch (err) {}
 
-        setText("badge", data.cached ? "✅ Report loaded from library" : "✨ Generated");
-        setText("status", data.cached ? `Cached @ ${data.created_at || ""}` : "Done.");
+        // ✅ refresh sidebar list when report was newly added to user's library
+        // Always refresh when not cached, or when it's a suggestion acceptance (adds to library)
+        if (!data.cached || data.from_suggestion || data.refreshed) {
+          window.loadReports?.();
+        }
+
+        // User-friendly messaging based on the operation type:
+        let badgeText = "New Report Generated";
+        let statusText = "";
+        
+        if (data.refreshed) {
+          // User clicked Regenerate button
+          badgeText = "Report Updated";
+          statusText = "";
+        } else if (data.from_suggestion) {
+          // User accepted suggestion from another user
+          badgeText = "Report Loaded from Library";
+          statusText = "";
+        } else if (data.auto_matched) {
+          // System auto-matched from user's own library (typo correction, etc)
+          badgeText = "Report Loaded from Library";
+          statusText = "";
+        } else if (data.cached) {
+          // User loaded their own cached report (clicked from library or exact search)
+          badgeText = "Report Loaded from Library";
+          statusText = "";
+        }
+        
+        setText("badge", badgeText);
+        setText("status", statusText);
       } catch (e) {
         setText("err", e?.message || String(e));
         setText("status");
@@ -713,6 +970,42 @@ const sb = window.sb;
         window._scoutRunning = false;
         $("run").disabled = false;
         setScoutLoader(false);
+      }
+    });
+
+    // Reports sidebar: search, click, refresh on visibility
+    const reportsListEl = $("reports_list");
+    const reportsCountEl = $("reports_count");
+    const reportSearchEl = $("report_q");
+
+    if (reportsListEl) {
+      reportsListEl.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-report-id]");
+        if (!btn) return;
+        const rid = btn.getAttribute("data-report-id");
+        openReportById(rid);
+      });
+    }
+
+    let searchTimer = null;
+    if (reportSearchEl) {
+      reportSearchEl.addEventListener("input", () => {
+        if (searchTimer) clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+          loadReports(reportSearchEl.value || "");
+        }, 250);
+      });
+    }
+
+    window.loadReports = (qArg) => loadReports(qArg ?? (reportSearchEl?.value || ""));
+
+    // Initial load
+    loadReports(reportSearchEl?.value || "");
+
+    // Refresh when tab becomes visible again (e.g., after idle)
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        loadReports(reportSearchEl?.value || "");
       }
     });
   }

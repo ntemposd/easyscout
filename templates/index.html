@@ -13,7 +13,7 @@
 
   <!-- App-only user badge (index-only bubble) -->
   <div class="mb-4">
-    <span id="user_badge" class="inline-block rounded-full bg-white border border-zinc-200 py-2 px-4 text-sm text-zinc-700 shadow-sm" style="font-size: 0;">Not signed in</span>
+    <span id="user_badge"></span>
   </div>
   
   <!-- Layout -->
@@ -82,20 +82,14 @@
             </button>-->
 
             <span class="flex-1"></span>
-
-            <span id="badge"
-              class="hidden text-sm px-3 py-1 rounded-full border border-zinc-300 text-zinc-600"
-              aria-live="polite"></span>
-            <span id="status" class="text-sm text-zinc-500" aria-live="polite"></span>
           </div>
 
           <div id="err" class="text-sm text-red-600" role="alert"></div>
           <div id="suggestion_box" class="hidden mt-3 p-3 border border-[#C1D9C7] rounded-md bg-[#E8F4EB] text-sm">
-            <div id="suggestion_text" class="mb-2 text-zinc-800"></div>
+            <div id="suggestion_text" class="mb-3 text-zinc-800 font-medium"></div>
             <div class="flex gap-2">
-              <button type="button" id="suggest_accept" class="btn-primary">Use saved report</button>
-              <button type="button" id="suggest_reject" class="btn-secondary">Generate new</button>
-              <button type="button" id="suggest_close" class="ml-auto btn-dismiss">Dismiss</button>
+              <button type="button" id="suggest_accept" class="btn-primary">Yes</button>
+              <button type="button" id="suggest_reject" class="btn-secondary">No</button>
             </div>
           </div>
         </form>
@@ -107,6 +101,9 @@
           <p class="text-base section-desc">Use the Generate button to create a report.</p>
       </div>
       <section class="bg-white border border-zinc-200 rounded-xl p-6 shadow-sm relative" style="min-width: 0;">
+        <!-- Status notification (top right) -->
+        <div id="badge" class="hidden absolute top-4 right-6 text-sm px-3 py-2 rounded-lg bg-zinc-100 text-zinc-700 font-medium" aria-live="polite"></div>
+        
         <!-- Loader moved to report pane so it doesn't block the form suggestion UI -->
         <div id="report_loader" class="hidden absolute inset-0 z-10 bg-white/70 flex items-center justify-center">
           <div class="flex items-center gap-2">
@@ -129,7 +126,7 @@
     <!-- SIDEBAR (1/3): My Reports -->
     <aside class="space-y-4">
       <div class="space-y-0 mt-0">
-          <h2 class="text-3xl font-extrabold tracking-tight section-title">My reports <span id="reports_count" class="inline items-center rounded-md bg-[#6FD06B]/10 px-2 py-1 text-2xl text-[#6FD06B] ring-1 ring-inset ring-[#6FD06B]/20"></span></h2>
+          <h2 class="text-3xl font-extrabold tracking-tight section-title flex items-center gap-3">My reports <span id="reports_count" class="inline-flex items-center justify-center rounded-md bg-[#6FD06B]/10 px-3 py-1 text-2xl font-extrabold text-[#6FD06B] ring-1 ring-inset ring-[#6FD06B]/20 min-w-[3rem]">0</span></h2>
           <p class="text-base section-desc">Search and open your saved reports.</p>
       </div>
       <section class="bg-white border border-zinc-200 rounded-xl p-6 shadow-sm space-y-3">
@@ -205,11 +202,6 @@
 {% block scripts %}
 <script>
   (function() {
-    if (!window.sb || !window.sb.auth) {
-      console.warn("Supabase not ready");
-      return;
-    }
-
     // Debounce report search input
     const reportQ = document.getElementById('report_q');
     if (reportQ) {
@@ -223,78 +215,104 @@
     }
 
     const userBadge = document.getElementById("user_badge");
+    if (userBadge) userBadge.style.whiteSpace = "nowrap";
     const loginLink = document.getElementById("login_link");
     const logoutBtn = document.getElementById("logout_btn");
     const creditsModal = document.getElementById("credits_modal");
     const runBtn = document.getElementById("run");
     let currentCredits = null;
+    let _lastRenderedToken = null; // Prevent double-render flicker when auth fires twice
+    let _isRenderingSession = false; // Gate to avoid overlapping renders
+
+    if (!window.sb || !window.sb.auth) {
+      console.warn("Supabase not ready");
+      if (userBadge) userBadge.textContent = "Loading...";
+      return;
+    }
+
+    // Debug: log element references
+    // DOM elements loaded
+
+    async function fetchCredits(accessToken) {
+      if (!accessToken) return null;
+      try {
+        const response = await fetch('/api/credits', {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        if (!response.ok) return null;
+        const data = await response.json();
+        // Support both shapes: {credits} and {credits_remaining}
+        const value = data.credits_remaining ?? data.credits;
+        return value ?? null;
+      } catch (err) {
+        console.error('[fetchCredits] error:', err);
+        return null;
+      }
+    }
 
     function renderLoggedOut() {
-      userBadge.innerHTML = "Not signed in";
+      userBadge.textContent = "";
       loginLink.style.display = "inline";
       logoutBtn.style.display = "none";
       if (runBtn) runBtn.textContent = "Generate";
     }
 
     function renderLoggedIn(session, credits = null) {
-      const email = session?.user?.email || "User";
-      const name = email.split('@')[0];
-      const creditsText = credits !== null ? credits : "—";
-      const creditWord = credits === 1 ? 'credit' : 'credits';
-      userBadge.innerHTML = `<span style="font-size: 0.875rem;">Hi ${name}! You have <a href="#" id="topup_link">${creditsText} ${creditWord}</a>.</span>`;
-      const link = document.getElementById("topup_link");
-      link.style.color = "rgb(37, 99, 235)";
-      link.style.fontWeight = "600";
-      link.style.fontSize = "0.875rem";
-      link.addEventListener('click', (e) => {
-        e.preventDefault();
-        if (creditsModal) creditsModal.classList.remove("hidden");
-      });
-      link.addEventListener('mouseover', (e) => {
-        e.target.style.textDecoration = 'underline';
-      });
-      link.addEventListener('mouseout', (e) => {
-        e.target.style.textDecoration = 'none';
-      });
       loginLink.style.display = "none";
       logoutBtn.style.display = "inline";
+      updateCreditsUI(credits, session);
     }
 
-    // Deduplicate rapid credit queries: reuse an in-flight promise and cache
-    // the last value for a short window to avoid repeated requests on refresh.
-    window._creditsCache = window._creditsCache || { ts: 0, val: null };
-    window._creditsPromise = window._creditsPromise || null;
+    function updateCreditsUI(credits, session) {
+      if (!userBadge) return;
+      
+      const email = session?.user?.email || "User";
+      const name = email.split('@')[0];
+      const creditsText = credits !== null && credits !== undefined ? credits : "—";
+      const creditWord = credits === 1 ? 'credit' : 'credits';
 
-    async function fetchCredits(token) {
-      // simple TTL cache: 3 seconds
-      try {
-        const now = Date.now();
-        if (window._creditsCache && (now - (window._creditsCache.ts || 0) < 3000)) {
-          return window._creditsCache.val;
+      // Always ensure the bubble structure exists first
+      const existingLink = document.getElementById("topup_link");
+      
+      if (!existingLink) {
+        // Initial render: create full structure once
+        const html = `<span style="font-size: 0.875rem;">Hi ${name}! You have <a href="#" id="topup_link" style="color: rgb(37, 99, 235); font-weight: 600; font-size: 0.875rem;">${creditsText}\u00A0${creditWord}</a>.</span>`;
+        userBadge.innerHTML = html;
+        
+        // Setup click handler (only on initial render)
+        const link = document.getElementById("topup_link");
+        if (link) {
+          link.onclick = (e) => {
+            e.preventDefault();
+            try {
+              window.trackClientEvent?.('credits_modal_opened', {
+                credits: currentCredits,
+                source: 'speech_bubble'
+              });
+            } catch (err) {}
+            if (creditsModal) creditsModal.classList.remove("hidden");
+          };
+          link.onmouseover = (e) => {
+            e.target.style.textDecoration = 'underline';
+          };
+          link.onmouseout = (e) => {
+            e.target.style.textDecoration = 'none';
+          };
         }
-
-        if (window._creditsPromise) {
-          return await window._creditsPromise;
-        }
-
-        window._creditsPromise = (async () => {
-          try {
-            const r = await fetch("/api/credits", { headers: { Authorization: `Bearer ${token}` } });
-            if (!r.ok) return null;
-            const j = await r.json();
-            const v = typeof j.credits === "number" ? j.credits : null;
-            window._creditsCache = { ts: Date.now(), val: v };
-            return v;
-          } catch {
-            return null;
-          } finally {
-            window._creditsPromise = null;
-          }
-        })();
-
-        return await window._creditsPromise;
-      } catch {
-        return null;
+      } else {
+        // Update only: just change the text content of existing link
+        existingLink.textContent = `${creditsText}\u00A0${creditWord}`;
+      }
+      
+      // Update modal badge
+      const modalCredits = document.getElementById("modal_credits_badge");
+      if (modalCredits) {
+        modalCredits.textContent = creditsText;
+      }
+      
+      // Update Generate button
+      if (runBtn) {
+        runBtn.textContent = credits === 0 ? "Top-up to generate report" : "Generate";
       }
     }
 
@@ -307,43 +325,45 @@
       
       const credits = await fetchCredits(session.access_token);
       currentCredits = credits;
-      
-      // Re-render the speech bubble with updated credits
-      const email = session?.user?.email || "User";
-      const name = email.split('@')[0];
-      const creditsText = credits !== null ? credits : "—";
-      const creditWord = credits === 1 ? 'credit' : 'credits';
-      userBadge.innerHTML = `<span style="font-size: 0.875rem;">Hi ${name}! You have <a href="#" id="topup_link">${creditsText} ${creditWord}</a>.</span>`;
-      const link = document.getElementById("topup_link");
-      link.style.color = "rgb(37, 99, 235)";
-      link.style.fontWeight = "600";
-      link.style.fontSize = "0.875rem";
-      link.addEventListener('click', (e) => {
-        e.preventDefault();
-        if (creditsModal) creditsModal.classList.remove("hidden");
-      });
-      link.addEventListener('mouseover', (e) => {
-        e.target.style.textDecoration = 'underline';
-      });
-      link.addEventListener('mouseout', (e) => {
-        e.target.style.textDecoration = 'none';
-      });
-      
-      // Update modal
-      const modalCredits = document.getElementById("modal_credits_badge");
-      if (modalCredits) {
-        modalCredits.textContent = creditsText;
-      }
-      
-      // Update Generate button text based on credits
-      if (runBtn) {
-        if (credits === 0) {
-          runBtn.textContent = "Top-up to generate report";
-        } else {
-          runBtn.textContent = "Generate";
+      updateCreditsUI(credits, session);
+    }
+
+    async function renderSession(session) {
+      if (_isRenderingSession) return;
+      _isRenderingSession = true;
+      try {
+        if (!session) {
+          currentCredits = null;
+          _lastRenderedToken = null;
+          renderLoggedOut();
+          window.loadReports("");
+          return;
         }
+
+        const token = session.access_token;
+        if (token && token === _lastRenderedToken) {
+          return;
+        }
+
+        const credits = await fetchCredits(token);
+        currentCredits = credits;
+        renderLoggedIn(session, credits);
+        _lastRenderedToken = token;
+        window.loadReports("");
+      } finally {
+        _isRenderingSession = false;
       }
     }
+
+    // Expose a simple synchronous function to update credits display
+    window.updateCreditsDisplay = function(newCredits) {
+      currentCredits = newCredits;
+      // Get cached session synchronously
+      const session = window._currentSession;
+      if (session) {
+        updateCreditsUI(newCredits, session);
+      }
+    };
 
     // Expose for other code paths (app.js + checkout + reports)
     window.getAccessToken = async function () {
@@ -360,166 +380,257 @@
     // });
 
     // ---- Reports sidebar ----
+    let _lastReportOpen = { id: null, ts: 0 };
+    let _openReportMutex = false;
     async function openReport(reportId) {
       const err = document.getElementById("err");
       if (err) err.textContent = "";
 
-      // Track report click
+      // Prevent concurrent execution
+      if (_openReportMutex) return;
+      _openReportMutex = true;
+
+      // Guard against rapid double-click/tap on the same report
       try {
-        window.trackClientEvent?.('report_clicked', { report_id: reportId });
+        const now = Date.now();
+        const rid = String(reportId);
+        if (_lastReportOpen.id === rid && (now - _lastReportOpen.ts) < 800) {
+          _openReportMutex = false;
+          return;
+        }
+        _lastReportOpen = { id: rid, ts: now };
       } catch (e) {}
 
-      const token = await window.getAccessToken?.();
-      if (!token) return;
+      const loader = document.getElementById("report_loader");
 
-      const r = await fetch(`/api/reports/${reportId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-
-      const payload = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        if (err) err.textContent = payload.error || "Failed to open report";
-        return;
-      }
-
-      // Prefer your rich renderer from app.js if present
-      const out = document.getElementById("out_html");
-      if (typeof window.renderReport === "function") {
-        out.innerHTML = window.renderReport(payload);
-      } else {
-        out.innerHTML = `<pre class="text-sm whitespace-pre-wrap">${(payload.report_md || "")}</pre>`;
-      }
-
-      // Enable drag-to-scroll on loaded report tables
-      if (typeof window.enableTableDragScroll === "function") {
-        window.enableTableDragScroll();
-      }
-
-      // Scroll the report title into view and align it under the sticky header
       try {
-        const out = document.getElementById('out_html');
+        const token = await window.getAccessToken?.();
+        if (!token) {
+          if (err) err.textContent = "Login to load saved reports.";
+          return;
+        }
+
+        if (loader) loader.classList.remove("hidden");
+
+        const r = await fetch(`/api/reports/${reportId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          if (err) err.textContent = j.error || "Failed to load report";
+          return;
+        }
+
+        const out = document.getElementById("out_html");
         if (out) {
-          const titleEl = out.querySelector('.text-2xl, h1, h2, .report-title');
-          const target = titleEl || out;
-          if (target) {
-            const rect = target.getBoundingClientRect();
-            const header = document.querySelector('header');
-            const headerH = header ? header.getBoundingClientRect().height : 0;
-            const y = window.scrollY + rect.top - headerH - 8; // small gap
-            window.scrollTo({ top: Math.max(0, Math.round(y)), behavior: 'smooth' });
+          const renderFn = window.renderReport;
+          if (typeof renderFn === "function") {
+            out.innerHTML = renderFn(j);
+          } else {
+            const esc = (s) => String(s || "").replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] || c));
+            const html = j.report_html || "";
+            out.innerHTML = html || `<pre class="text-sm">${esc(j.report_md || "")}</pre>`;
           }
         }
-      } catch (e) {}
 
-      const badge = document.getElementById("badge");
-      const status = document.getElementById("status");
-      if (badge) badge.textContent = "📚 Loaded from library";
-      if (status) status.textContent = "";
+        const badge = document.getElementById("badge");
+        const status = document.getElementById("status");
+        if (badge) {
+          badge.textContent = "📚 Loaded from library";
+          badge.classList.remove("hidden");
+        }
+        if (status) status.textContent = "";
+      } catch (renderError) {
+        if (err) err.textContent = "Failed to load report.";
+      } finally {
+        if (loader) loader.classList.add("hidden");
+        _openReportMutex = false;
+      }
     }
 
-    window.loadReports = async function loadReports(q = "") {
-      const list = document.getElementById("reports_list");
+    const reportsState = {
+      items: [],
+      total: null,
+      offset: 0,
+      pageSize: 30,
+      loading: false,
+      done: false,
+      q: "",
+      token: null,
+    };
+    let reportsObserver = null;
+
+    function updateReportsBadge(total) {
       const count = document.getElementById("reports_count");
-      if (!list) return;
-
-      const token = await window.getAccessToken?.();
-      if (!token) {
-        list.innerHTML = `<div class="text-sm text-zinc-500">Login to see your saved reports.</div>`;
-        if (count) count.textContent = "";
-        return;
+      if (!count) return;
+      // Always show a number, with min-width preventing collapse
+      if (Number.isFinite(total)) {
+        count.textContent = `${total}`;
+      } else {
+        count.textContent = `${reportsState.items.length}`;
       }
+    }
 
-      const url = new URL("/api/reports", window.location.origin);
-      url.searchParams.set("limit", "30");
-      if (q) url.searchParams.set("q", q);
+          function setupReportsObserver() {
+            const sentinel = document.getElementById("reports_load_more_sentinel");
+            if (!sentinel || reportsState.done) return;
 
-      // In-memory client-side cache to avoid repeated sidebar requests
-      window._reportsCache = window._reportsCache || { ts: 0, data: null, ttl: 5000 };
-      const now = Date.now();
-      if (!q && window._reportsCache.data && (now - window._reportsCache.ts) < window._reportsCache.ttl) {
-        renderReportsFromCache(window._reportsCache.data);
-        return;
-      }
+            if (reportsObserver) {
+              reportsObserver.disconnect();
+            }
 
-      // insert skeleton placeholders to reserve space and avoid layout shift
-      list.innerHTML = `
-        <div class="reports-skeleton" aria-hidden="true">
-          <div class="s-item"></div>
-          <div class="s-item"></div>
-          <div class="s-item"></div>
-          <div class="s-item"></div>
-        </div>
-      `;
-      try { list.style.minHeight = '240px'; } catch (e) {}
+            reportsObserver = new IntersectionObserver((entries) => {
+              if (entries.some(e => e.isIntersecting)) {
+                fetchAndRenderReports();
+              }
+            }, { root: null, rootMargin: "0px 0px 200px 0px" });
 
-      const r = await fetch(url.toString(), {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        list.innerHTML = `<div class="text-sm text-red-600">${j.error || "Failed to load reports"}</div>`;
-        if (count) count.textContent = "";
-        return;
-      }
-
-      const items = j.items || [];
-      if (r.ok && !q) {
-        try { window._reportsCache = { ts: Date.now(), data: items, ttl: 5000 }; } catch (e) {}
-      }
-
-      // Deduplicate by player name (normalized) and keep the latest report per player
-      const byName = new Map();
-      for (const it of items) {
-        const name = (it.player_name || "").trim().toLowerCase();
-        if (!name) continue;
-        const existing = byName.get(name);
-        if (!existing) {
-          byName.set(name, it);
-          continue;
-        }
-        const a = new Date(it.created_at || 0);
-        const b = new Date(existing.created_at || 0);
-        if (a > b) byName.set(name, it);
-      }
-
-      const deduped = Array.from(byName.values()).sort((a, b) => {
-        return new Date(b.created_at || 0) - new Date(a.created_at || 0);
-      });
-
-      if (count) count.textContent = deduped.length ? `${deduped.length}` : "";
-
-      if (!deduped.length) {
-        list.innerHTML = `<div class="text-sm text-zinc-500">No saved reports yet.</div>`;
-        return;
-      }
-
-      list.innerHTML = deduped.map(it => {
-        let dateStr = "";
-        if (it.created_at) {
-          try {
-            const d = new Date(it.created_at);
-            dateStr = d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-          } catch (e) {
-            dateStr = it.created_at.split('T')[0];
+            reportsObserver.observe(sentinel);
           }
-        }
-        return `
-        <button
-          type="button"
-          class="report-item w-full text-left text-sm px-3 py-2 rounded-md border border-zinc-200 hover:bg-zinc-50"
-          data-report-id="${it.id}">
-          <div class="font-medium">${it.player_name || "Report"}</div>
-          ${it.position ? `<div class="text-xs text-zinc-500">${it.position}</div>` : ''}
-        </button>
-      `;
-      }).join("");
 
-      // attach handlers and animate items into view
-      const nodes = Array.from(list.querySelectorAll("button[data-report-id]"));
-      nodes.forEach(btn => btn.addEventListener("click", () => openReport(btn.dataset.reportId)));
-      // Ensure clicks reach items even on mobile when layout/overlays change: event-delegate at container level
-      list.onclick = function (e) {
+          function renderReportsList() {
+            const list = document.getElementById("reports_list");
+            if (!list) return;
+
+            if (!reportsState.items.length && reportsState.done) {
+              list.innerHTML = `<div class="text-sm text-zinc-500">No saved reports yet.</div>`;
+              updateReportsBadge(0);
+              return;
+            }
+
+            const html = reportsState.items.map(it => {
+              let dateStr = "";
+              if (it.created_at) {
+                try {
+                  const d = new Date(it.created_at);
+                  dateStr = d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+                } catch (e) {
+                  dateStr = it.created_at.split('T')[0];
+                }
+              }
+              return `
+              <button
+                type="button"
+                class="report-item w-full text-left text-sm px-3 py-2 rounded-md border border-zinc-200 hover:bg-zinc-50"
+                data-report-id="${it.id}">
+                <div class="font-medium">${it.player_name || "Report"}</div>
+                ${it.position ? `<div class="text-xs text-zinc-500">${it.position}</div>` : ''}
+              </button>
+            `;
+            }).join("");
+
+            const sentinel = reportsState.done ? "" : `<div id="reports_load_more_sentinel" class="py-2 text-center text-xs text-zinc-500">Loading more…</div>`;
+            list.innerHTML = html + sentinel;
+
+            const nodes = Array.from(list.querySelectorAll("button[data-report-id]"));
+            requestAnimationFrame(() => nodes.forEach(n => n.classList.add('visible')));
+
+            setupReportsObserver();
+          }
+
+          async function fetchAndRenderReports() {
+            if (reportsState.loading || reportsState.done) return;
+
+            const list = document.getElementById("reports_list");
+            const count = document.getElementById("reports_count");
+            if (!list) return;
+
+            const token = reportsState.token || await window.getAccessToken?.();
+            if (!token) {
+              list.innerHTML = `<div class="text-sm text-zinc-500">Login to see your saved reports.</div>`;
+              if (count) count.textContent = "0";
+              reportsState.done = true;
+              return;
+            }
+
+            reportsState.token = token;
+            reportsState.loading = true;
+
+            const url = new URL("/api/reports", window.location.origin);
+            url.searchParams.set("limit", String(reportsState.pageSize));
+            url.searchParams.set("offset", String(reportsState.offset));
+            if (reportsState.q) url.searchParams.set("q", reportsState.q);
+
+            const r = await fetch(url.toString(), {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+
+            const j = await r.json().catch(() => ({}));
+            if (!r.ok) {
+              list.innerHTML = `<div class="text-sm text-red-600">${j.error || "Failed to load reports"}</div>`;
+              if (count) count.textContent = "0";
+              reportsState.loading = false;
+              reportsState.done = true;
+              return;
+            }
+
+            const items = Array.isArray(j.items) ? j.items : [];
+            const total = Number(j.total);
+            if (Number.isFinite(total)) {
+              reportsState.total = total;
+            }
+
+            reportsState.items = reportsState.items.concat(items);
+            reportsState.offset += items.length;
+
+            if (reportsState.total !== null) {
+              updateReportsBadge(reportsState.total);
+              if (reportsState.offset >= reportsState.total) {
+                reportsState.done = true;
+              }
+            } else {
+              updateReportsBadge(reportsState.items.length);
+            }
+
+            if (items.length < reportsState.pageSize) {
+              reportsState.done = true;
+            }
+
+            renderReportsList();
+            reportsState.loading = false;
+          }
+
+          window.loadReports = async function loadReports(q = "") {
+            const list = document.getElementById("reports_list");
+            const count = document.getElementById("reports_count");
+            if (!list) return;
+
+            // reset state
+            reportsState.items = [];
+            reportsState.total = null;
+            reportsState.offset = 0;
+            reportsState.loading = false;
+            reportsState.done = false;
+            reportsState.q = q;
+            reportsState.token = null;
+
+            // clear badge and show skeleton
+            if (count) count.textContent = "0";
+            list.innerHTML = `
+              <div class="reports-skeleton" aria-hidden="true">
+                <div class="s-item"></div>
+                <div class="s-item"></div>
+                <div class="s-item"></div>
+                <div class="s-item"></div>
+              </div>
+            `;
+            try { list.style.minHeight = '240px'; } catch (e) {}
+
+            if (reportsObserver) {
+              reportsObserver.disconnect();
+              reportsObserver = null;
+            }
+
+            // Fetch first page; subsequent pages load on scroll
+              await fetchAndRenderReports();
+            };
+
+
+    // Set up delegated click handler once for the reports list
+    const reportsList = document.getElementById("reports_list");
+    if (reportsList && !reportsList._handlerAttached) {
+      reportsList._handlerAttached = true;
+      reportsList.onclick = function (e) {
         try {
           const btn = (e.target && e.target.closest) ? e.target.closest('button[data-report-id]') : null;
           if (btn) {
@@ -527,64 +638,40 @@
           }
         } catch (err) {}
       };
-      // trigger CSS transition
-      requestAnimationFrame(() => nodes.forEach(n => n.classList.add('visible')));
-      try { list.style.minHeight = ''; } catch (e) {}
-    };
-
-    function renderReportsFromCache(items) {
-      const list = document.getElementById("reports_list");
-      const count = document.getElementById("reports_count");
-      if (!list) return;
-      const byName = new Map();
-      for (const it of items) {
-        const name = (it.player_name || "").trim().toLowerCase();
-        if (!name) continue;
-        const existing = byName.get(name);
-        if (!existing) { byName.set(name, it); continue; }
-        const a = new Date(it.created_at || 0);
-        const b = new Date(existing.created_at || 0);
-        if (a > b) byName.set(name, it);
-      }
-      const deduped = Array.from(byName.values()).sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
-      if (count) count.textContent = deduped.length ? `${deduped.length}` : "";
-      if (!deduped.length) { list.innerHTML = `<div class="text-sm text-zinc-500">No saved reports yet.</div>`; return; }
-      list.innerHTML = deduped.map(it => {
-        let dateStr = "";
-        if (it.created_at) {
-          try {
-            const d = new Date(it.created_at);
-            dateStr = d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-          } catch (e) {
-            dateStr = it.created_at.split('T')[0];
-          }
-        }
-        return `
-        <button
-          type="button"
-          class="report-item w-full text-left text-sm px-3 py-2 rounded-md border border-zinc-200 hover:bg-zinc-50"
-          data-report-id="${it.id}">
-          <div class="font-medium">${it.player_name || "Report"}</div>
-          ${it.position ? `<div class="text-xs text-zinc-500">${it.position}</div>` : ''}
-        </button>
-      `;
-      }).join("");
-      const nodes = Array.from(list.querySelectorAll("button[data-report-id]"));
-      nodes.forEach(btn => btn.addEventListener("click", () => openReport(btn.dataset.reportId)));
-      list.onclick = function (e) {
-        try {
-          const btn = (e.target && e.target.closest) ? e.target.closest('button[data-report-id]') : null;
-          if (btn) { openReport(btn.dataset.reportId); }
-        } catch (err) {}
-      };
-      requestAnimationFrame(() => nodes.forEach(n => n.classList.add('visible')));
     }
 
-    // Debounced search
+    // Debounced search with search_initiated event (fires after typing pause)
     let _rt = null;
+    let _searchInitiated = false;
+    let _lastTrackedQuery = "";
+    const _searchInitiatedDebounceMs = 500;
+    let _initTimer = null;
     document.getElementById("report_q")?.addEventListener("input", (e) => {
+      const query = e.target.value.trim();
+
+      // Reset search session when input is cleared
+      if (!query) {
+        _searchInitiated = false;
+        _lastTrackedQuery = "";
+      }
+
+      // Debounce the initial search event and track only when query changes
+      clearTimeout(_initTimer);
+      if (query) {
+        _initTimer = setTimeout(() => {
+          if (!_searchInitiated || query !== _lastTrackedQuery) {
+            _searchInitiated = true;
+            _lastTrackedQuery = query;
+            try {
+              window.trackClientEvent?.('search_initiated', { initial_query: query });
+            } catch (err) {}
+          }
+        }, _searchInitiatedDebounceMs);
+      }
+
+      // Debounce the list fetch separately (quicker)
       clearTimeout(_rt);
-      _rt = setTimeout(() => window.loadReports(e.target.value.trim()), 250);
+      _rt = setTimeout(() => window.loadReports(query), 250);
     });
 
     // Initial render
@@ -592,51 +679,35 @@
       if (!window.sb || !window.sb.auth) return;
       const { data } = await window.sb.auth.getSession();
       const session = data?.session || null;
+      window._currentSession = session; // Cache for synchronous access
 
-      if (!session) {
-        renderLoggedOut();
-        window.loadReports(""); // will show login message
-        return;
-      }
-
-      // Fetch credits first, then render with the value
-      const credits = await fetchCredits(session.access_token);
-      currentCredits = credits;
-      renderLoggedIn(session, credits);
-      
-      // Update modal and button
-      const modalCredits = document.getElementById("modal_credits_badge");
-      if (modalCredits) modalCredits.textContent = (credits ?? "—");
-      if (runBtn) {
-        runBtn.textContent = credits === 0 ? "Top-up to generate report" : "Generate";
-      }
-      
-      window.loadReports("");
+      await renderSession(session);
     })();
 
     // Auth changes
     if (window.sb && window.sb.auth) {
       window.sb.auth.onAuthStateChange(async (_event, session) => {
-        if (!session) {
-          renderLoggedOut();
-          window.loadReports("");
-          return;
-        }
-        
-        // Fetch credits first, then render with the value
-        const credits = await fetchCredits(session.access_token);
-        currentCredits = credits;
-        renderLoggedIn(session, credits);
-        
-        // Update modal and button
-        const modalCredits = document.getElementById("modal_credits_badge");
-        if (modalCredits) modalCredits.textContent = (credits ?? "—");
-        if (runBtn) {
-          runBtn.textContent = credits === 0 ? "Top-up to generate report" : "Generate";
-        }
-        
-        window.loadReports(document.getElementById("report_q")?.value?.trim() || "");
+        window._currentSession = session; // Cache for synchronous access
+        await renderSession(session);
       });
+    }
+
+    // Intercept run button click when credits are 0
+    if (runBtn) {
+      runBtn.addEventListener('click', (e) => {
+        if (currentCredits === 0) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          // Track modal open from zero-credit button
+          try {
+            window.trackClientEvent?.('credits_modal_opened', {
+              credits: 0,
+              source: 'generate_button_zero_credits'
+            });
+          } catch (err) {}
+          if (creditsModal) creditsModal.classList.remove("hidden");
+        }
+      }, true); // use capture phase to intercept before app.js handler
     }
   })();
 </script>
@@ -690,11 +761,24 @@
     window.location.href = j.url;
   }
 
-  // Modal buttons
-  document.getElementById("modal_buy5")?.addEventListener("click", () => startCheckout(5, "modal_buy_err"));
-  document.getElementById("modal_buy10")?.addEventListener("click", () => startCheckout(10, "modal_buy_err"));
+  // Modal buttons with event tracking
+  document.getElementById("modal_buy5")?.addEventListener("click", () => {
+    try {
+      window.trackClientEvent?.('topup_5_clicked', { amount: 5 });
+    } catch (err) {}
+    startCheckout(5, "modal_buy_err");
+  });
+  document.getElementById("modal_buy10")?.addEventListener("click", () => {
+    try {
+      window.trackClientEvent?.('topup_10_clicked', { amount: 10 });
+    } catch (err) {}
+    startCheckout(10, "modal_buy_err");
+  });
   document.getElementById("modal_buyCustom")?.addEventListener("click", () => {
     const n = parseInt(document.getElementById("modal_custom_credits").value || "0", 10);
+    try {
+      window.trackClientEvent?.('topup_custom_clicked', { amount: n });
+    } catch (err) {}
     startCheckout(n, "modal_buy_err");
   });
 

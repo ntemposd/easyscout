@@ -32,7 +32,7 @@
     <p id="msg" class="text-sm text-zinc-600"></p>
 
     <p class="text-xs text-zinc-500">
-      By continuing, you’ll receive an email from Supabase with a sign-in link.
+      By continuing, you’ll receive an email with a sign-in link.
     </p>
   </div>
 </main>
@@ -77,8 +77,8 @@
       const email = document.getElementById("email").value.trim();
       const msg = document.getElementById("msg");
 
-      // Track magic link send attempt
-      const distinctId = window.getDistinctId ? window.getDistinctId() : crypto.randomUUID();
+      // Track magic link send attempt (await distinct id)
+      const distinctId = window.getDistinctId ? (await window.getDistinctId()) : crypto.randomUUID();
       fetch('/api/analytics', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -122,21 +122,11 @@
           return;
         }
 
-        // Success: show countdown and close tab
-        let remaining = 5;
-        const renderMsg = () => {
-          msg.textContent = `Email sent! Check your mailbox. This tab will close in ⌛${remaining}`;
-        };
-        renderMsg();
-        const timer = setInterval(() => {
-          remaining -= 1;
-          if (remaining <= 0) {
-            clearInterval(timer);
-            try { window.close(); } catch (e) {}
-          } else {
-            renderMsg();
-          }
-        }, 1000);
+        // Success: instant redirect (no countdown)
+        msg.textContent = "Email sent! Check your mailbox. Redirecting to homepage...";
+        setTimeout(() => {
+          window.location.replace('/');
+        }, 600);
       } catch (err) {
         msg.textContent = "Error: " + (err?.message || String(err));
       }

@@ -7,6 +7,8 @@ where needed to avoid circular imports with `app.py`.
 from difflib import SequenceMatcher
 import os
 import re
+import sys
+import time
 
 try:
     from rapidfuzz import fuzz
@@ -35,21 +37,19 @@ import os
 
 # --- Analytics (optional) ---
 try:
-    from posthog import Posthog
+    try:
+        # Newer SDKs expose Client; alias it to Posthog for compatibility
+        from posthog import Client as Posthog
+    except Exception:
+        # Older SDKs expose Posthog directly
+        from posthog import Posthog  # type: ignore
 
     _POSTHOG_API_KEY = os.getenv("POSTHOG_API_KEY")
     _POSTHOG_HOST = os.getenv("POSTHOG_HOST") or "https://app.posthog.com"
-    if _POSTHOG_API_KEY:
-        # Prefer explicit keyword `project_api_key` for compatibility
-        # flush_interval in milliseconds; set to 0 for immediate flush in production
-        flush_interval = 0 if os.getenv("ENV") == "production" else 5000
-        _analytics_client = Posthog(
-            project_api_key=_POSTHOG_API_KEY, 
-            host=_POSTHOG_HOST,
-            flush_interval=flush_interval
-        )
+    if _POSTHOG_API_KEY and Posthog:
+        _analytics_client = Posthog(project_api_key=_POSTHOG_API_KEY, host=_POSTHOG_HOST)
         try:
-            logging.getLogger("posthog").info("PostHog analytics initialized (flush_interval=%dms)", flush_interval)
+            logging.getLogger("posthog").info("PostHog analytics initialized")
         except Exception:
             pass
     else:
@@ -75,11 +75,11 @@ def track_event(distinct_id: str | None, event: str, properties: dict | None = N
             # Use a fresh short-lived client so we can flush immediately without
             # affecting the global client state.
             try:
-                from posthog import Posthog as PH
+                from posthog import Client as PH
 
                 ph = PH(project_api_key=os.getenv("POSTHOG_API_KEY"), host=os.getenv("POSTHOG_HOST") or "https://app.posthog.com")
                 try:
-                    ph.capture(event, properties=properties or {}, distinct_id=distinct_id or "anonymous")
+                    ph.capture(distinct_id=distinct_id or "anonymous", event=event, properties=properties or {})
                 except TypeError:
                     import posthog as ph_mod
 
@@ -88,7 +88,7 @@ def track_event(distinct_id: str | None, event: str, properties: dict | None = N
                     ph.shutdown()
                 except Exception:
                     pass
-                logger.info("event flushed immediately: %s", event)
+                logger.info("event flushed immediately: %s with properties: %s", event, properties or {})
                 return
             except Exception as e:
                 logger.exception("Immediate flush failed, falling back to pooled client: %s", e)
@@ -96,7 +96,7 @@ def track_event(distinct_id: str | None, event: str, properties: dict | None = N
         # Normal path: use pooled client
         logger.info("tracking event %s for %s: %s", event, distinct_id or "anonymous", properties or {})
         try:
-            _analytics_client.capture(event, properties=properties or {}, distinct_id=distinct_id or "anonymous")
+            _analytics_client.capture(distinct_id=distinct_id or "anonymous", event=event, properties=properties or {})
             logger.info("event queued (client.capture): %s", event)
             return
         except TypeError:
@@ -168,16 +168,8 @@ def analytics_enabled() -> dict:
     except Exception:
         return {"enabled": False, "host": None, "has_key": False}
 
-# Small nickname/alias map to normalize common first-name variants
-NICKNAME_MAP = {
-    "kostas": "konstantinos",
-    "kostaras": "konstantinos",
-    "kostis": "konstantinos",
-    "konsta": "konstantinos",
-    "gianis": "giannis",
-    "yianis": "giannis",
-    "gannis": "giannis",
-}
+# Import name variant mappings from dedicated file
+from utils.name_variants import NICKNAME_MAP
 
 # Matching thresholds (configurable via env)
 FIRSTNAME_REQUIRE = int(os.getenv("FIRSTNAME_REQUIRE", "90"))
@@ -243,6 +235,146 @@ def _ensure_parsed_payload(payload: dict) -> dict:
     return payload
 
 
+def _find_by_embedding_similarity(
+    user_id: str,
+    player: str,
+    team: str = "",
+    league: str = "",
+    client=None,
+    auto_threshold: float = 0.86,
+    suggest_threshold: float = 0.78,
+    max_scan: int = 50,
+):
+    """Find similar reports using embedding vectors (FAST, semantic)
+    
+    Returns: {"type": "auto" | "suggest", "report_id": ..., "score": ...} or None
+    """
+    if not player or not client:
+        return None
+    
+    conn = None
+    try:
+        from db import connect
+        from utils.embeddings import find_nearest
+        
+        conn = connect()
+        player_norm = normalize_name(player, transliterate=True)
+        league_norm = (league or "").strip().lower()
+        team_norm = (team or "").strip().lower()
+        
+        # Find nearest neighbors by embedding
+        tops = find_nearest(conn, client, player, top_k=5)
+        
+        if not tops:
+            return None
+        
+        best_rid, best_sim = tops[0]
+        
+        # Check league/team constraints
+        try:
+            from db_pg import get_report
+            payload = get_report(user_id, int(best_rid))
+            if not payload:
+                return None
+            
+            cand_league = (payload.get("league") or "").strip().lower()
+            cand_team = (payload.get("team") or payload.get("team_name") or "").strip().lower()
+            
+            if league_norm and cand_league and league_norm != cand_league:
+                # Try next best
+                if len(tops) > 1:
+                    best_rid, best_sim = tops[1]
+                    payload = get_report(user_id, int(best_rid))
+                    if not payload:
+                        return None
+                    cand_league = (payload.get("league") or "").strip().lower()
+                    if league_norm and cand_league and league_norm != cand_league:
+                        return None
+                else:
+                    return None
+            
+            if not league_norm and team_norm and cand_team and team_norm != cand_team:
+                return None  # Team provided and doesn't match
+        except Exception:
+            return None
+        
+        # Check first/last name alignment (safety check)
+        try:
+            pn_parts = player_norm.split()
+            nn = payload.get("player") or ""
+            nn_parts = normalize_name(nn).split()
+            
+            if pn_parts and nn_parts:
+                pn_first = pn_parts[0]
+                pn_last = pn_parts[-1]
+                nn_first = nn_parts[0]
+                nn_last = nn_parts[-1]
+                
+                # Last names must align (exact or phonetic)
+                if not _last_names_align(player_norm, normalize_name(nn)):
+                    return None
+                
+                # First names: check nickname canonicalization
+                pn_first_canon = NICKNAME_MAP.get(pn_first, pn_first)
+                nn_first_canon = NICKNAME_MAP.get(nn_first, nn_first)
+                
+                if pn_first_canon == nn_first_canon:
+                    # Exact first name match (or nickname equiv)
+                    pass  # Allow it
+                else:
+                    # Compute first name similarity
+                    fname_sim = 0
+                    if _HAS_RAPIDFUZZ and _token_set_ratio is not None:
+                        try:
+                            fname_sim = int(_token_set_ratio(pn_first, nn_first) or 0)
+                        except Exception:
+                            fname_sim = 0
+                    else:
+                        try:
+                            fname_sim = int(SequenceMatcher(None, pn_first, nn_first).ratio() * 100)
+                        except Exception:
+                            fname_sim = 0
+                    
+                    # Allow if embedding is very strong OR first name is reasonably similar
+                    if not (
+                        fname_sim >= FIRSTNAME_REQUIRE
+                        or (best_sim >= 0.95 and fname_sim >= FIRSTNAME_SECONDARY)
+                    ):
+                        return None  # First name too different
+        except Exception:
+            pass  # Safety check failed, reject
+            return None
+        
+        # Return based on similarity threshold
+        if best_sim >= auto_threshold:
+            payload["cached"] = True
+            payload["report_id"] = int(best_rid)
+            payload["matched_player_name"] = payload.get("player")
+            payload["matched_score"] = int(best_sim * 100)
+            from db_pg import get_balance
+            payload["credits_remaining"] = get_balance(user_id)
+            return {"type": "auto", "payload": payload, "score": int(best_sim * 100)}
+        
+        elif best_sim >= suggest_threshold:
+            return {
+                "type": "suggest",
+                "report_id": int(best_rid),
+                "player_name": payload.get("player"),
+                "score": int(best_sim * 100),
+            }
+    except Exception as e:
+        logger.warning(f"Embedding similarity check failed: {e}")
+    finally:
+        # Always close SQLite connection
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    
+    return None
+
+
 def _best_similar_report(
     user_id: str,
     player: str,
@@ -254,32 +386,159 @@ def _best_similar_report(
     max_scan: int = 200,
     transliterate: bool = True,
 ):
-    """Scan recent reports for this user and return either an `auto` payload,
+    """Scan user's recent reports and return either an `auto` payload, 
     a `suggest` dict with `report_id`, or None.
     """
     if not player or not player.strip():
         return None
     player_norm = normalize_name(player, transliterate=transliterate)
+    started = time.monotonic()
+    max_secs = float(os.getenv("FUZZY_TIMEOUT_SECS", "3.0"))
 
     candidates = []
+    # Search Postgres FIRST (where current reports live)
+    # Do NOT fallback to SQLite — that's old/stale data and may include other users' reports
     try:
-        from db import list_local_reports
-
-        candidates = list_local_reports(limit=max_scan)
+        from db_pg import list_reports
+        candidates = list_reports(user_id, q="", limit=max_scan)
     except Exception:
         candidates = []
 
-    if not candidates:
-        try:
-            from db_pg import list_reports
+    # If no Postgres candidates, return None (don't search SQLite)
+    # SQLite is only for embeddings storage, not for matching
 
-            candidates = list_reports(user_id, q="", limit=max_scan)
-        except Exception:
-            return None
+    
+    if not candidates:
+        # No reports in Postgres for this user → no fuzzy matches possible
+        return None
 
     # Normalize provided league/team for quick checks
     league_norm = (league or "").strip().lower()
     team_norm = (team or "").strip().lower()
+
+    # EXACT MATCH CHECK: If we find an exact normalized match from another user,
+    # return it as a suggestion with score=100 so it auto-accepts and saves to their library
+    # This includes nickname-aware matching (e.g., "Kostas" matches "Konstantinos")
+    player_parts = player_norm.split()
+    player_first = player_parts[0] if player_parts else ""
+    player_last = player_parts[-1] if player_parts else ""
+    player_first_canon = NICKNAME_MAP.get(player_first, player_first)
+
+    def _last_names_align(a_norm: str, b_norm: str) -> bool:
+        """Require last names to agree (exact, phonetic, or fuzzy) for suggestions.
+
+        Tolerates 1-2 char typos (e.g., Papanikolaoy vs Papanikolaou).
+        Prevents cross-player reuse when surnames are genuinely different.
+        """
+        try:
+            a_last = (a_norm.split()[-1] if a_norm else "").strip()
+            b_last = (b_norm.split()[-1] if b_norm else "").strip()
+            if not a_last or not b_last:
+                return False
+            if a_last == b_last:
+                return True
+            # Normalize both for diacritic/case comparison
+            try:
+                import unicodedata
+                a_clean = ''.join(c for c in unicodedata.normalize('NFD', a_last) if unicodedata.category(c) != 'Mn').lower()
+                b_clean = ''.join(c for c in unicodedata.normalize('NFD', b_last) if unicodedata.category(c) != 'Mn').lower()
+                if a_clean == b_clean:
+                    return True
+            except Exception:
+                pass
+            try:
+                pa = phonetic_key(a_last)
+                pb = phonetic_key(b_last)
+                if pa and pb and pa == pb:
+                    return True
+            except Exception:
+                pass
+            # Fuzzy match for typos: allow if similarity >= 90% and length difference <= 2
+            try:
+                if _HAS_RAPIDFUZZ and _token_set_ratio is not None:
+                    sim = int(_token_set_ratio(a_last.lower(), b_last.lower()) or 0)
+                else:
+                    sim = int(SequenceMatcher(None, a_last.lower(), b_last.lower()).ratio() * 100)
+                
+                len_diff = abs(len(a_last) - len(b_last))
+                if sim >= 90 and len_diff <= 2:
+                    return True
+            except Exception:
+                pass
+        except Exception:
+            return False
+        return False
+    
+    for c in candidates:
+        try:
+            if time.monotonic() - started > max_secs:
+                return None
+        except Exception:
+            pass
+        name_raw = (c.get("player_name") or c.get("player") or "").strip()
+        if not name_raw:
+            continue
+        name_norm = normalize_name(name_raw, transliterate=transliterate)
+        
+        # Check for exact match (including nickname equivalence)
+        is_exact_match = False
+        if player_norm == name_norm:
+            is_exact_match = True
+        else:
+            # Check nickname-canonicalized match
+            name_parts = name_norm.split()
+            name_first = name_parts[0] if name_parts else ""
+            name_last = name_parts[-1] if name_parts else ""
+            name_first_canon = NICKNAME_MAP.get(name_first, name_first)
+            
+            # Match if: same last name + same canonical first name
+            # Also allow phonetic last name match for common typos (e.g., Farid vs Faried)
+            last_name_match = player_last == name_last
+            if not last_name_match:
+                try:
+                    # Check phonetic similarity for last names (handles 1-letter typos)
+                    from utils.phonetic import phonetic_key
+                    p_phonetic = phonetic_key(player_last)
+                    n_phonetic = phonetic_key(name_last)
+                    if p_phonetic and n_phonetic and p_phonetic == n_phonetic:
+                        last_name_match = True
+                    # Also check string distance for very close matches
+                    elif player_last and name_last:
+                        # Allow 1-char difference for names >= 5 chars
+                        if len(player_last) >= 5 and len(name_last) >= 5:
+                            from difflib import SequenceMatcher
+                            sim = SequenceMatcher(None, player_last, name_last).ratio()
+                            if sim >= 0.85:  # 85% similarity
+                                last_name_match = True
+                except Exception:
+                    pass
+            
+            if last_name_match and player_first_canon == name_first_canon:
+                is_exact_match = True
+        
+        if is_exact_match:
+            # Check league/team constraints
+            try:
+                cand_league = (c.get("league") or "").strip().lower()
+                cand_team = (c.get("team") or "").strip().lower()
+                if league_norm and cand_league and league_norm != cand_league:
+                    continue  # League mismatch, keep looking
+                if team_norm and cand_team and team_norm != cand_team:
+                    continue  # Team mismatch, keep looking
+            except Exception:
+                pass
+
+            # Safety: ensure surnames align before suggesting
+            if not _last_names_align(player_norm, name_norm):
+                continue
+            
+            # Exact match found! Return as suggestion with score 100 (will trigger auto-accept)
+            return {
+                "type": "suggest",
+                "report_id": int(c.get("id")),
+                "player_name": name_raw,
+                "score": 100,
+            }
 
     # Helper: compute first/last alignment and similarities accounting for
     # reversed input (e.g., "White Derrick") and nickname canonicalization.
@@ -447,6 +706,10 @@ def _best_similar_report(
                                         )
                                     ):
                                         return None
+
+                                    # Guard: require surname alignment (exact or phonetic)
+                                    if not _last_names_align(player_norm, normalize_name(nn)):
+                                        return None
                         except Exception:
                             pass
 
@@ -485,6 +748,11 @@ def _best_similar_report(
     best_score = 0
 
     for c in candidates:
+        try:
+            if time.monotonic() - started > max_secs:
+                return None
+        except Exception:
+            pass
         name_raw = (c.get("player_name") or c.get("player") or "").strip()
         if not name_raw:
             continue
@@ -595,15 +863,25 @@ def _best_similar_report(
                 )
 
                 strong_last = last_sim >= 85 or lp == ln
-                strong_first = first_sim >= 60 or first_p == first_n or NICKNAME_MAP.get(first_p) == NICKNAME_MAP.get(first_n)
+                first_p_canon = NICKNAME_MAP.get(first_p, first_p)
+                first_n_canon = NICKNAME_MAP.get(first_n, first_n)
+                strong_first = first_sim >= 60 or first_p == first_n or first_p_canon == first_n_canon
+
+                print(f"DEBUG FUZZY: Comparing '{player_norm}' with '{name_norm}'", file=sys.stderr)
+                print(f"  - Scores: token={score}, reduced={red_score}, first={first_sim}, last={last_sim}", file=sys.stderr)
+                print(f"  - Parts: player=({first_p}, {lp}), candidate=({first_n}, {ln})", file=sys.stderr)
+                print(f"  - Canonical: player={first_p_canon}, candidate={first_n_canon}", file=sys.stderr)
+                print(f"  - Strong: last={strong_last}, first={strong_first}, team/league={have_team_or_league}", file=sys.stderr)
 
                 if red_score >= 80 and strong_last:
                     if strong_first or have_team_or_league:
                         boosted = max(score, 88)
+                        print(f"  → BOOSTING to {boosted} (was {score})", file=sys.stderr)
                         if boosted > best_score:
                             best_score = boosted
                             best = {"meta": c, "name_raw": name_raw}
                     else:
+                        print(f"  → CAPPING to {min(score, 84)} (not strong_first, no team/league)", file=sys.stderr)
                         try:
                             score = min(score, int(suggest_threshold) - 1)
                         except Exception:
@@ -683,6 +961,10 @@ def _best_similar_report(
             # so the server falls back to LLM generation rather than returning
             # a potentially incorrect suggestion (e.g., Okaro vs Derrick).
             return None
+
+        # Additional guard: surnames must align (exact or phonetic) to return a suggestion
+        if not _last_names_align(player_norm, _norm_name(best["name_raw"])):
+            return None
     except Exception as e:
         # Log but don't suppress safety check failures
         import logging
@@ -697,3 +979,73 @@ def _best_similar_report(
         }
 
     return None
+
+
+# --- Cost Estimation ---
+
+def estimate_cost(usage: dict, prices: dict) -> float:
+    """Calculate estimated cost based on token usage and pricing.
+    
+    Args:
+        usage: Dict with 'input_tokens' and 'output_tokens' keys
+        prices: Dict with 'input' and 'output' keys (price per 1M tokens)
+    
+    Returns:
+        Estimated cost in dollars
+    """
+    input_tokens = usage.get("input_tokens", 0)
+    output_tokens = usage.get("output_tokens", 0)
+    
+    return (
+        input_tokens / 1_000_000 * prices["input"]
+        + output_tokens / 1_000_000 * prices["output"]
+    )
+
+
+# Default pricing for common models ($ per 1M tokens)
+# Source: https://openai.com/api/pricing/ (as of January 2026)
+MODEL_PRICES = {
+    # GPT-5 Series (Flagship models)
+    "gpt-5.2": {"input": 1.75, "output": 14.00},
+    "gpt-5.2-pro": {"input": 21.00, "output": 168.00},
+    "gpt-5-mini": {"input": 0.25, "output": 2.00},
+    
+    # GPT-4.1 Series
+    "gpt-4.1": {"input": 3.00, "output": 12.00},
+    "gpt-4.1-mini": {"input": 0.80, "output": 3.20},
+    "gpt-4.1-nano": {"input": 0.20, "output": 0.80},
+    
+    # Legacy GPT-4 Series (deprecated, using estimated pricing)
+    "gpt-4": {"input": 30.0, "output": 60.0},
+    "gpt-4-turbo": {"input": 10.0, "output": 30.0},
+    "gpt-4o": {"input": 5.0, "output": 15.0},
+    "gpt-4o-mini": {"input": 0.15, "output": 0.6},
+    
+    # GPT-3.5 Series (legacy)
+    "gpt-3.5-turbo": {"input": 0.5, "output": 1.5},
+    
+    # Default fallback
+    "default": {"input": 1.75, "output": 14.00},  # GPT-5.2 pricing
+}
+
+
+def get_model_prices(model: str) -> dict:
+    """Get pricing for a specific model.
+    
+    Args:
+        model: Model name
+        
+    Returns:
+        Dict with 'input' and 'output' pricing per 1M tokens
+    """
+    # Check exact match first
+    if model in MODEL_PRICES:
+        return MODEL_PRICES[model]
+    
+    # Check if model name contains known model as substring
+    for model_key in MODEL_PRICES:
+        if model_key in model.lower():
+            return MODEL_PRICES[model_key]
+    
+    # Return default pricing
+    return MODEL_PRICES["default"]

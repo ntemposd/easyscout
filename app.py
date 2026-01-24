@@ -7,7 +7,11 @@ load_dotenv(override=True)
 import logging
 import os
 import uuid
-import sentry_sdk
+
+try:
+    import sentry_sdk
+except ImportError:
+    sentry_sdk = None
 
 try:
     import stripe
@@ -26,9 +30,12 @@ except Exception:
         def __init__(self, *args, **kwargs):
             pass
 
-from sentry_sdk.integrations.excepthook import ExcepthookIntegration
-from sentry_sdk.integrations.flask import FlaskIntegration
-from sentry_sdk.integrations.logging import LoggingIntegration
+try:
+    from sentry_sdk.integrations.excepthook import ExcepthookIntegration
+    from sentry_sdk.integrations.flask import FlaskIntegration
+    from sentry_sdk.integrations.logging import LoggingIntegration
+except ImportError:
+    ExcepthookIntegration = FlaskIntegration = LoggingIntegration = None
 
 import db_pg
 from auth import require_user_id
@@ -39,13 +46,17 @@ from db_pg import (
     find_report_by_query_key,
     get_balance,
     get_report,
+    get_report_by_id,
     insert_report,
     list_reports,
+    count_reports,
     make_query_key,
     record_stripe_event,
     record_stripe_purchase,
     refund_credits,
     spend_credits,
+    initialize_user_with_welcome_credits,
+    update_report_by_id,
 )
 from services.scout import get_or_generate_scout_report
 from utils.metrics import increment_metric, list_metrics, list_timings
@@ -53,9 +64,11 @@ from utils.parse import extract_display_md
 from utils.prompts import load_text_prompt
 from utils.render import md_to_safe_html, ensure_parsed_payload
 from utils.normalize import normalize_name
+from utils.name_variants import NICKNAME_MAP
 
 from utils.app_helpers import (
     _best_similar_report,
+    _find_by_embedding_similarity,
     _HAS_RAPIDFUZZ,
     _token_sort_ratio,
     _token_set_ratio,
@@ -64,6 +77,7 @@ from utils.app_helpers import (
     analytics_enabled,
     shutdown_analytics,
 )
+from utils.email import send_email
 
 import atexit
 
@@ -109,7 +123,7 @@ def sitemap():
 
 @app.route("/favicon.ico")
 def favicon():
-    return app.send_static_file("../favicon.ico")
+    return app.send_static_file("favicon.ico")
 
 
 # 404 handler: render 404 template without ERROR logs
@@ -141,6 +155,16 @@ except Exception:
     pass
 
 # --------------------
+# Logging Setup (must be early to use logger in config)
+# --------------------
+logging.basicConfig(level=logging.INFO)
+# Reduce verbosity from noisy libraries in normal runs
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("werkzeug").setLevel(logging.INFO)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logger = logging.getLogger(__name__)
+
+# --------------------
 # Config
 # --------------------
 MODEL = os.getenv("OPENAI_MODEL", "gpt-5.2")
@@ -170,28 +194,20 @@ else:
 # Initialize client if enabled
 client = OpenAI() if ENABLE_OPENAI else None
 
-# Logging: report OpenAI enablement at startup
-logging.basicConfig(level=logging.INFO)
-# Reduce verbosity from noisy libraries in normal runs
-logging.getLogger("httpx").setLevel(logging.WARNING)
-# keep Flask/werkzeug access logs visible for local dev
-logging.getLogger("werkzeug").setLevel(logging.INFO)
-logging.getLogger("urllib3").setLevel(logging.WARNING)
-logger = logging.getLogger(__name__)
-
 # Sentry error monitoring (no-op if SENTRY_DSN is unset)
-SENTRY_TRACES_SAMPLE_RATE = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.05"))
-sentry_sdk.init(
-    dsn=os.getenv("SENTRY_DSN", ""),
-    integrations=[
-        FlaskIntegration(),
-        LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
-        ExcepthookIntegration(),
-    ],
-    traces_sample_rate=SENTRY_TRACES_SAMPLE_RATE,
-    environment=os.getenv("SENTRY_ENV", os.getenv("ENV", "development")),
-    send_default_pii=False,
-)
+if sentry_sdk:
+    SENTRY_TRACES_SAMPLE_RATE = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.05"))
+    sentry_sdk.init(
+        dsn=os.getenv("SENTRY_DSN", ""),
+        integrations=[
+            FlaskIntegration(),
+            LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+            ExcepthookIntegration(),
+        ],
+        traces_sample_rate=SENTRY_TRACES_SAMPLE_RATE,
+        environment=os.getenv("SENTRY_ENV", os.getenv("ENV", "development")),
+        send_default_pii=False,
+    )
 if ENABLE_OPENAI and client is not None:
     logger.info(
         "OpenAI generation ENABLED (client initialized). Set ENABLE_OPENAI=0 to disable."
@@ -288,15 +304,6 @@ def api_render_md():
     data = request.get_json(force=True) or {}
     md = data.get("md") or ""
     try:
-        # Analytics: user-rendered markdown
-        try:
-            user_id = require_user_id(request)
-        except Exception:
-            user_id = None
-        track_event(user_id, "render_markdown", {"length": len(md)})
-    except Exception:
-        pass
-    try:
         display_md = extract_display_md(md)
         html = md_to_safe_html(display_md)
         return jsonify({"html": html})
@@ -311,11 +318,22 @@ def api_render_md():
 def api_credits():
     try:
         user_id = require_user_id(request)
+        # Grant welcome bonus on first-ever call for this user
+        try:
+            initialize_user_with_welcome_credits(user_id)
+        except Exception:
+            # Silently fail if already granted or DB error; user still gets balance
+            pass
         return jsonify({"credits": get_balance(user_id)})
     except PermissionError as e:
         return jsonify({"error": str(e)}), 401
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        try:
+            logger.exception(e)
+        except Exception:
+            pass
+        # Graceful fallback: show zero credits when Postgres is unavailable
+        return jsonify({"credits": 0, "error": "credits_unavailable"}), 200
 
 
 @app.post("/api/dev/grant_credits")
@@ -417,6 +435,40 @@ def dev_inspect_reports():
     return jsonify({"items": results})
 
 
+@app.post("/api/dev/send_email")
+def dev_send_email():
+    # Enable only when DEV_TOOLS=1
+    if os.getenv("DEV_TOOLS") != "1":
+        return jsonify({"error": "disabled"}), 404
+
+    # Gate behind auth for consistency with other dev endpoints
+    try:
+        _ = require_user_id(request)
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 401
+
+    data = request.get_json(force=True) or {}
+    to = (data.get("to") or "").strip()
+    subject = (data.get("subject") or "").strip()
+    html = data.get("html")
+    text = data.get("text")
+
+    if not to or not subject or not (html or text):
+        return jsonify({"error": "missing to, subject, and body (html or text)"}), 400
+
+    try:
+        resp = send_email(to=to, subject=subject, html=html, text=text)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    message_id = None
+    try:
+        message_id = resp.get("MessageId")  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    return jsonify({"ok": True, "message_id": message_id})
+
+
 @app.get("/api/reports")
 def api_reports():
     try:
@@ -426,19 +478,37 @@ def api_reports():
 
     q = (request.args.get("q") or "").strip()
     try:
-        limit = int(request.args.get("limit") or "20")
+        limit = int(request.args.get("limit") or "1000")
     except ValueError:
-        limit = 20
+        limit = 1000
 
-    items = list_reports(user_id, q=q, limit=limit)
     try:
-        # Only track when user explicitly searches, not on initial page load
-        if q:
-            track_event(user_id, "searched_reports", {"q": q, "limit": limit, "count": len(items)})
-    except Exception:
-        pass
+        offset = int(request.args.get("offset") or "0")
+    except ValueError:
+        offset = 0
+
+    # Prevent unbounded offsets
+    offset = max(offset, 0)
+
+    try:
+        items = list_reports(user_id, q=q, limit=limit, offset=offset)
+        total = count_reports(user_id, q=q)
+    except Exception as e:
+        # Fallback to local SQLite cache in dev/offline to avoid blank UI
+        try:
+            logger.exception(e)
+        except Exception:
+            pass
+        try:
+            from db import list_local_reports
+
+            items = list_local_reports(limit=limit)
+            total = len(items)
+        except Exception:
+            return jsonify({"error": "reports_unavailable"}), 503
+
     # Lightweight caching hints for clients
-    resp = jsonify({"items": items})
+    resp = jsonify({"items": items, "total": total})
     try:
         resp.headers["Cache-Control"] = "private, max-age=5"
     except Exception:
@@ -500,10 +570,6 @@ def api_report(report_id: int):
     except Exception:
         payload.setdefault("report_html", "")
 
-    try:
-        track_event(user_id, "view_report", {"report_id": int(report_id), "cached": bool(payload.get("cached", False))})
-    except Exception:
-        pass
     # If structured fields are missing (e.g., payload came from Postgres with
     # minimal JSON), attempt to parse them from the stored markdown so the
     # client can render tables (season snapshot, last3_games, grades, info_fields).
@@ -1079,6 +1145,77 @@ def _require_admin_user():
 
 
 # --------------------
+# Save Suggested Report (free, saves another user's report to current user's library)
+# --------------------
+
+
+@app.post("/api/save_suggestion")
+def save_suggestion():
+    """
+    Accept a suggested report from another user and save it to the current user's library.
+    This is a FREE operation (doesn't charge credits).
+    """
+    try:
+        user_id = require_user_id(request)
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 401
+
+    data = request.get_json(force=True) or {}
+    
+    report_id = data.get("report_id")
+    if not report_id:
+        return jsonify({"error": "Missing report_id"}), 400
+    
+    try:
+        report_id = int(report_id)
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid report_id"}), 400
+    
+    # Fetch the report (from any user, but verify it exists)
+    try:
+        report = get_report(report_id)
+    except Exception:
+        return jsonify({"error": f"Report {report_id} not found"}), 404
+    
+    if not report:
+        return jsonify({"error": f"Report {report_id} not found"}), 404
+    
+    # Extract key fields from the source report
+    player_name = report.get("player_name") or report.get("player") or ""
+    report_md = report.get("report_md", "")
+    payload = report.get("payload", {})
+    
+    # Create a copy for this user without charging credits
+    try:
+        query_obj = {
+            "player": player_name,
+            "team": (payload.get("team") or "").strip(),
+            "league": (payload.get("league") or "").strip(),
+            "season": (payload.get("season") or "").strip(),
+            "use_web": True,
+        }
+        
+        # Save to this user's library using upsert (won't create duplicate if same query_key)
+        pg_id = insert_report(
+            user_id=user_id,
+            player_name=player_name,
+            query_obj=query_obj,
+            report_md=report_md,
+            payload=payload,
+            cached=True,  # Mark as cached since it came from a suggestion
+        )
+        
+        return jsonify({
+            "success": True,
+            "report_id": pg_id,
+            "message": f"Report saved to your library",
+        })
+    except Exception as e:
+        logger.error("Failed to save suggested report: %s", e)
+        return jsonify({"error": f"Failed to save report: {str(e)}"}), 500
+
+
+# --------------------
 # Scout (requires login + costs 1 credit)
 # --------------------
 
@@ -1102,24 +1239,231 @@ def scout():
 
     use_web = bool(data.get("use_web", False))
     refresh = bool(data.get("refresh", False))
+    report_id_to_update = data.get("report_id")  # For regenerating existing reports
+    accept_suggestion = bool(data.get("accept_suggestion", False))  # For accepting suggestions
+    suggestion_report_id = data.get("suggestion_report_id")  # Source report ID when accepting
+
+    # HANDLE SUGGESTION ACCEPTANCE: Check if already have it first, then charge only if new
+    if accept_suggestion and suggestion_report_id:
+        logger.info(f"[ACCEPT_SUGGESTION] Starting for report_id={suggestion_report_id}, player='{player}'")
+        try:
+            suggestion_report_id = int(suggestion_report_id)
+        except (ValueError, TypeError):
+            return jsonify({"error": "Invalid suggestion_report_id"}), 400
+        
+        # Fetch the source report (Postgres first, then local SQLite fallback)
+        logger.info(f"[ACCEPT_SUGGESTION] Fetching source report from Postgres...")
+        source_report = None
+        try:
+            source_report = get_report_by_id(suggestion_report_id)
+            logger.info(f"[ACCEPT_SUGGESTION] Postgres fetch: {'SUCCESS' if source_report else 'NOT_FOUND'}")
+        except Exception:
+            source_report = None
+
+        if not source_report:
+            # Fallback: try local SQLite cache (may happen if embedding suggestions reference local IDs)
+            logger.info(f"[ACCEPT_SUGGESTION] Postgres fetch failed, trying SQLite fallback...")
+            try:
+                from db import connect
+
+                conn = connect()
+                row = conn.execute(
+                    "SELECT player, report_md, team, league, season, use_web, model, created_at FROM reports WHERE id = ? LIMIT 1",
+                    (suggestion_report_id,),
+                ).fetchone()
+                conn.close()
+                if row:
+                    logger.info(f"[ACCEPT_SUGGESTION] SQLite fallback: SUCCESS")
+                    source_report = {
+                        "player": row[0] or "",
+                        "report_md": row[1] or "",
+                        "team": row[2] or "",
+                        "league": row[3] or "",
+                        "season": row[4] or "",
+                        "use_web": bool(row[5]),
+                        "model": row[6] or "",
+                        "created_at": row[7] or None,
+                        "cached": False,
+                    }
+                else:
+                    logger.info(f"[ACCEPT_SUGGESTION] SQLite fallback: NOT_FOUND")
+            except Exception as e:
+                logger.error(f"[ACCEPT_SUGGESTION] SQLite fallback error: {e}")
+                source_report = None
+
+        if not source_report:
+            logger.error(f"[ACCEPT_SUGGESTION] Source report not found anywhere")
+            return jsonify({"error": f"Source report not found"}), 404
+        
+        # Check if user already has a report with the SOURCE report's canonical name
+        # (not the user's typed query, which might have typos)
+        # Use the source report's player name since fuzzy matching already determined they're the same player
+        logger.info(f"[ACCEPT_SUGGESTION] Checking if user already has this report...")
+        source_player_name = source_report.get("player", "")
+        
+        def _canonical_query_name(name: str) -> str:
+            norm = normalize_name(name, transliterate=True)
+            parts = norm.split()
+            if not parts:
+                return norm
+            first = parts[0]
+            first_canon = NICKNAME_MAP.get(first, first)
+            parts[0] = first_canon
+            return " ".join(parts)
+
+        # Use SOURCE report's player name (the correct one without typos)
+        canonical_query_player = _canonical_query_name(source_player_name)
+        logger.info(f"[ACCEPT_SUGGESTION] Checking for existing report with canonical_player='{canonical_query_player}'")
+        existing_query_obj = {
+            "player": canonical_query_player,
+            "team": team,
+            "league": league,
+            "season": season,
+            "use_web": True,
+        }
+        existing_query_key = make_query_key(existing_query_obj)
+        existing_by_key = find_report_by_query_key(user_id, existing_query_key)
+        
+        if existing_by_key:
+            # User already has this report (by canonical name) — return FREE without charging
+            logger.info(f"[ACCEPT_SUGGESTION] User already has this report (id={existing_by_key.get('id')}) → returning FREE")
+            existing_payload = existing_by_key.get("payload") or {}
+            existing_payload["report_md"] = existing_by_key.get("report_md") or existing_payload.get("report_md", "")
+            try:
+                payload = ensure_parsed_payload(existing_payload)
+            except Exception:
+                payload = existing_payload
+            
+            payload["cached"] = True
+            payload["created_at"] = existing_by_key.get("created_at")
+            payload["report_id"] = existing_by_key.get("id")
+            payload["library_id"] = existing_by_key.get("id")
+            payload["credits_remaining"] = get_balance(user_id)
+            
+            # Ensure HTML is present
+            try:
+                display_md = extract_display_md(existing_payload.get("report_md", "") or "")
+                payload["report_html"] = md_to_safe_html(display_md)
+            except Exception:
+                payload.setdefault("report_html", "")
+            
+            return jsonify(payload)
+        
+        # No existing report with this canonical name — charge 1 credit and save as new
+        logger.info(f"[ACCEPT_SUGGESTION] User doesn't have this report → charging 1 credit...")
+        try:
+            new_balance = spend_credits(
+                user_id,
+                1,
+                reason="accept_suggestion",
+                source_type="scout_request",
+                source_id=f"accept_suggestion_{suggestion_report_id}",
+            )
+        except ValueError as e:
+            if "INSUFFICIENT_CREDITS" in str(e):
+                return jsonify({"error": "Insufficient credits"}), 402
+            raise
+        
+        # Save the suggestion to the current user's library (reusing the existing report data)
+        try:
+            # get_report_by_id returns the payload directly (not wrapped)
+            source_payload = source_report or {}
+            source_md = source_payload.get("report_md", "")
+            
+            # Prepare payload for insertion - ensure it has all structured fields
+            # Use the SOURCE report's proper name, not the user's typed query
+            payload = dict(source_payload)  # Make a copy
+            payload["cached"] = False  # User paid 1 credit for this cross-user suggestion
+            payload["report_md"] = source_md
+            # Use SOURCE report's player name (proper-cased), not user's query
+            source_player_name = source_report.get("player") or player
+            payload["player"] = source_player_name
+            payload["player_name"] = source_player_name
+            payload["team"] = team
+            
+            # Parse structured fields from markdown if missing
+            try:
+                payload = ensure_parsed_payload(payload)
+            except Exception:
+                pass
+            
+            insert_query_obj = {
+                "player": canonical_query_player,  # Use canonical name for deduplication
+                "team": team,
+                "league": league,
+                "season": season,
+                "use_web": True,
+            }
+            
+            pg_id = insert_report(
+                user_id=user_id,
+                player_name=source_player_name,  # Use SOURCE report's proper-cased name
+                query_obj=insert_query_obj,
+                report_md=source_md,
+                payload=payload,  # Use enhanced payload
+                cached=False,  # User paid 1 credit
+            )
+            
+            # Update payload with IDs and credits for return
+            payload["created_at"] = source_report.get("created_at")
+            payload["report_id"] = pg_id
+            payload["library_id"] = pg_id
+            payload["credits_remaining"] = new_balance
+            
+            # Ensure HTML is present
+            try:
+                display_md = extract_display_md(source_md or "")
+                payload["report_html"] = md_to_safe_html(display_md)
+            except Exception:
+                payload.setdefault("report_html", "")
+            
+            return jsonify(payload)
+        except Exception as e:
+            logger.error("Failed to save accepted suggestion: %s", e)
+            # Refund the credit on failure
+            try:
+                refund_credits(
+                    user_id,
+                    1,
+                    reason="refund_suggestion_save_failed",
+                    source_type="scout_request_refund",
+                    source_id=f"accept_suggestion_{suggestion_report_id}:refund",
+                )
+            except Exception:
+                pass
+            return jsonify({"error": f"Failed to save suggestion: {str(e)}"}), 500
+
+    # Canonicalize player for deduplication (nickname → formal)
+    def _canonical_query_name(name: str) -> str:
+        norm = normalize_name(name, transliterate=True)
+        parts = norm.split()
+        if not parts:
+            return norm
+        first = parts[0]
+        first_canon = NICKNAME_MAP.get(first, first)
+        parts[0] = first_canon
+        return " ".join(parts)
+
+    canonical_query_player = _canonical_query_name(player)
 
     # This defines "same report" for the user's library.
     # (Keep refresh inside if you want refresh=true to be a different saved report;
     # if you DON'T want that, tell me and I’ll adjust.)
     query_obj = {
-        "player": player,
+        "player": canonical_query_player,
         "team": team,
         "league": league,
         "season": season,
         "use_web": True,  # Always True since server generates with web search
-        "refresh": refresh,
     }
     query_key = make_query_key(query_obj)
 
     # ✅ FREE if already in the user's library (don't charge a credit)
     # If the exact same query_key exists for this user, return it immediately.
+    # But skip if this is an explicit regeneration (report_id provided + refresh=true)
     existing = find_report_by_query_key(user_id, query_key)
-    if existing:
+    logger.info(f"[MATCH] Query key lookup: {'HIT' if existing else 'MISS'}")
+    if existing and not (report_id_to_update and refresh):
         owned_payload = existing.get("payload") or {}
         # Ensure canonical markdown is present
         owned_payload["report_md"] = existing.get("report_md") or owned_payload.get(
@@ -1205,110 +1549,152 @@ def scout():
         owned_payload["credits_remaining"] = get_balance(user_id)
         return jsonify(owned_payload)
 
-    # QUICK LOCAL CACHE: consult aliases (if any) and SQLite before any LLM calls
+    # QUICK LOCAL CACHE: consult SQLite cache index to find if player exists, then fetch from Postgres
     if not refresh:
         try:
+            # Check if player exists in cache (by name or alias)
             alias = find_canonical_by_alias(player)
+            logger.info(f"[MATCH] Alias lookup: {'HIT → ' + alias.get('player_norm') if alias and alias.get('player_norm') else 'MISS'}")
             if alias and alias.get("player_norm"):
-                # Use canonical player's name for cache lookup
-                # We don't have stored canonical display name here, so call get_cached_report
-                local = get_cached_report(
-                    alias.get("player_norm"),
-                    team=team,
-                    league=league,
-                    season=season,
-                    use_web=False,
-                )
-            else:
-                local = get_cached_report(
-                    player, team=team, league=league, season=season, use_web=False
-                )
-
-            if local:
-                owned_payload = {"report_md": local.get("report_md") or ""}
-                try:
-                    display_md = extract_display_md(
-                        owned_payload.get("report_md", "") or ""
-                    )
-                    owned_payload["report_html"] = md_to_safe_html(display_md)
-                except Exception:
-                    owned_payload.setdefault("report_html", "")
-                # Populate structured fields so client tables render
-                parsed_ok = False
-                try:
-                    from utils.parse import (
-                        extract_grades,
-                        extract_info_fields,
-                        extract_last3_games,
-                        extract_season_snapshot,
-                    )
-
-                    report_md_local = owned_payload.get("report_md", "") or ""
-                    try:
-                        owned_payload["info_fields"] = extract_info_fields(
-                            report_md_local
-                        )
-                    except Exception:
-                        owned_payload["info_fields"] = {}
-                    try:
-                        grades_local, final_verdict_local = extract_grades(
-                            report_md_local
-                        )
-                        owned_payload["grades"] = grades_local
-                        owned_payload["final_verdict"] = final_verdict_local
-                    except Exception:
-                        owned_payload["grades"] = []
-                        owned_payload.setdefault("final_verdict", "")
-                    try:
-                        owned_payload["season_snapshot"] = extract_season_snapshot(
-                            report_md_local
-                        )
-                    except Exception:
-                        owned_payload["season_snapshot"] = {}
-                    try:
-                        owned_payload["last3_games"] = extract_last3_games(
-                            report_md_local
-                        )
-                    except Exception:
-                        owned_payload["last3_games"] = []
-                except Exception:
-                    parsed_ok = False
-                finally:
-                    owned_payload["parsed_from_md"] = bool(parsed_ok)
-
-                    # Ensure structured fields are present (best-effort)
-                    try:
-                        owned_payload = ensure_parsed_payload(owned_payload)
-                    except Exception:
-                        pass
+                canonical_name = alias.get("player_norm")
                 try:
                     increment_metric("alias_hits")
                 except Exception:
                     pass
+            else:
+                # Check if exact player exists in cache
+                local = get_cached_report(
+                    player, team=team, league=league, season=season, use_web=False
+                )
+                if local:
+                    canonical_name = local.get("player") or player
+                else:
+                    canonical_name = None
+            
+            # If found in cache, fetch from Postgres using the canonical name
+            if canonical_name:
                 try:
-                    increment_metric("cache_hits")
-                except Exception:
+                    # Build query key for Postgres lookup
+                    cache_query_obj = {
+                        "player": canonical_name,
+                        "team": team,
+                        "league": league,
+                        "season": season,
+                        "use_web": True,
+                        "refresh": False,
+                    }
+                    cache_query_key = make_query_key(cache_query_obj)
+                    
+                    # Try to find in user's Postgres library
+                    pg_report = find_report_by_query_key(user_id, cache_query_key)
+                    if pg_report:
+                        owned_payload = pg_report.get("payload") or {}
+                        owned_payload["report_md"] = pg_report.get("report_md") or owned_payload.get("report_md", "")
+                        
+                        # Ensure HTML and structured fields are present
+                        try:
+                            display_md = extract_display_md(owned_payload.get("report_md", "") or "")
+                            owned_payload["report_html"] = md_to_safe_html(display_md)
+                        except Exception:
+                            owned_payload.setdefault("report_html", "")
+                        
+                        try:
+                            owned_payload = ensure_parsed_payload(owned_payload)
+                        except Exception:
+                            pass
+                        
+                        try:
+                            increment_metric("cache_hits")
+                        except Exception:
+                            pass
+                        
+                        owned_payload["cached"] = True
+                        owned_payload["created_at"] = pg_report.get("created_at")
+                        owned_payload["report_id"] = pg_report.get("id")
+                        owned_payload["credits_remaining"] = get_balance(user_id)
+                        return jsonify(owned_payload)
+                except Exception as e:
+                    # If Postgres lookup fails, continue to generation
+                    logger.warning(f"Cache hit but Postgres fetch failed: {e}")
                     pass
-                owned_payload["cached"] = True
-                owned_payload["created_at"] = local.get("created_at")
-                owned_payload["report_id"] = local.get("id")
-                owned_payload["credits_remaining"] = get_balance(user_id)
-                return jsonify(owned_payload)
         except Exception:
             pass
 
-    # If user did not request a forced refresh, try a fuzzy-match lookup
-    # against recent saved reports to avoid duplicate LLM calls for typos.
+    # If user did not request a forced refresh, try similarity matching
+    # Priority: Embeddings (fast, semantic) → Fuzzy (token-based) → LLM
     if not refresh:
         try:
-            # Extra pre-check with stricter thresholds to avoid false suggestions.
-            # When `league` is provided, use looser thresholds and rely on league matching.
-            # When `league` is omitted (name/team only), enforce strict first-name requirements.
+            # STEP 1: Try embedding-based similarity (fast, semantic)
+            # Embeddings run FIRST because they're fast and catch semantic equivalents
+            try:
+                if league and league.strip():
+                    embed_auto, embed_suggest = 0.95, 0.75
+                else:
+                    embed_auto, embed_suggest = 0.95, 0.78
+                
+                embed_similar = _find_by_embedding_similarity(
+                    user_id,
+                    player,
+                    team=team,
+                    league=league,
+                    client=client,
+                    auto_threshold=embed_auto,
+                    suggest_threshold=embed_suggest,
+                    max_scan=50,
+                )
+                if embed_similar:
+                    logger.info(f"[MATCH] Embedding match: type={embed_similar.get('type')}, score={embed_similar.get('score')}, report_id={embed_similar.get('report_id')}")
+                else:
+                    logger.info("[MATCH] Embedding match: MISS")
+                if embed_similar:
+                    try:
+                        if embed_similar.get("type") == "auto":
+                            increment_metric("fuzzy_auto_hits")
+                        else:
+                            increment_metric("fuzzy_suggests")
+                    except Exception:
+                        pass
+                    if embed_similar.get("type") == "auto":
+                        payload = embed_similar.get("payload") or {}
+                        payload["auto_matched"] = True
+                        try:
+                            payload = ensure_parsed_payload(payload)
+                        except Exception:
+                            pass
+                        payload["credits_remaining"] = get_balance(user_id)
+                        return jsonify(payload)
+                    elif embed_similar.get("type") == "suggest":
+                        # Return suggestion from embedding match
+                        suggestion_report_id = embed_similar.get("report_id")
+                        suggestion_payload = None
+                        try:
+                            from db_pg import get_report
+                            suggestion_payload = get_report(user_id, int(suggestion_report_id))
+                        except Exception:
+                            suggestion_payload = None
+                        
+                        return jsonify(
+                            {
+                                "match_suggestion": {
+                                    "report_id": suggestion_report_id,
+                                    "player_name": embed_similar.get("player_name"),
+                                    "team": suggestion_payload.get("team") if suggestion_payload else team,
+                                    "league": suggestion_payload.get("league") if suggestion_payload else league,
+                                    "score": embed_similar.get("score"),
+                                },
+                                "auto_matched": False,
+                                "credits_remaining": get_balance(user_id),
+                                "note": "Similar player found in your library",
+                            }
+                        )
+            except Exception as e:
+                logger.debug(f"Embedding similarity check failed: {e}")
+                pass  # Fall through to fuzzy matching
+            
+            # STEP 2: Fall back to fuzzy-match lookup if embeddings didn't match
             if league and league.strip():
                 pre_auto, pre_suggest = 78, 68
             else:
-                # No league provided: require very high suggest threshold to force
-                # LLM fallback when first-name signal is weak (avoid Okaro→Derrick).
                 pre_auto, pre_suggest = 88, 75
 
             pre_similar = _best_similar_report(
@@ -1319,9 +1705,13 @@ def scout():
                 client=client,
                 auto_threshold=pre_auto,
                 suggest_threshold=pre_suggest,
-                max_scan=500,
+                max_scan=200,
                 transliterate=True,
             )
+            if pre_similar:
+                logger.info(f"[MATCH] Fuzzy match: type={pre_similar.get('type')}, score={pre_similar.get('score')}, report_id={pre_similar.get('report_id')}")
+            else:
+                logger.info("[MATCH] Fuzzy match: MISS")
             if pre_similar:
                 try:
                     if pre_similar.get("type") == "auto":
@@ -1521,6 +1911,8 @@ def scout():
                             "match_suggestion": {
                                 "report_id": pre_similar.get("report_id"),
                                 "player_name": pre_similar.get("player_name"),
+                                "team": suggestion_payload.get("team") if suggestion_payload else None,
+                                "league": suggestion_payload.get("league") if suggestion_payload else None,
                                 "score": pre_similar.get("score"),
                                 "report_payload": suggestion_payload,
                             },
@@ -1655,6 +2047,8 @@ def scout():
                             "match_suggestion": {
                                 "report_id": similar.get("report_id"),
                                 "player_name": similar.get("player_name"),
+                                "team": suggestion_payload.get("team") if suggestion_payload else None,
+                                "league": suggestion_payload.get("league") if suggestion_payload else None,
                                 "score": similar.get("score"),
                                 "report_payload": suggestion_payload,
                             },
@@ -1688,6 +2082,18 @@ def scout():
     # Server-side override: always use web search when generating a new report
     generation_use_web = True
 
+    # Track generation start
+    try:
+        track_event(user_id, "report_gen_started", {
+            "player": player,
+            "team": team,
+            "league": league,
+            "use_web": generation_use_web,
+            "refresh": refresh
+        })
+    except Exception:
+        pass
+
     # Safety: avoid making OpenAI generation calls unless explicitly enabled.
     if client is None:
         return (
@@ -1708,13 +2114,33 @@ def scout():
             season=season,
             use_web=generation_use_web,
             refresh=refresh,
+            user_id=user_id,
         )
     except Exception as e:
+        # Track generation failure
+        try:
+            track_event(user_id, "generation_failed", {
+                "player": player,
+                "error": str(e),
+                "error_type": type(e).__name__
+            })
+        except Exception:
+            pass
         return jsonify({"error": str(e)}), 500
 
     # Detect prompt-specified sentinel for missing player
     report_md = (payload.get("report_md") or "").strip()
     if report_md.startswith("PLAYER_NOT_FOUND:"):
+        # Track player not found
+        try:
+            track_event(user_id, "generation_failed", {
+                "player": player,
+                "error": report_md,
+                "error_type": "player_not_found"
+            })
+        except Exception:
+            pass
+        
         # Attempt a fallback fuzzy-match against the user's saved reports
         try:
             # Fallback fuzzy-match after a PLAYER_NOT_FOUND sentinel from the model.
@@ -1746,11 +2172,25 @@ def scout():
                     # Return cached payload (no charge)
                     return jsonify(payload)
                 elif fb.get("type") == "suggest":
+                    # Fetch team/league info for the suggestion
+                    fb_team = None
+                    fb_league = None
+                    try:
+                        from db_pg import get_report
+                        fb_payload = get_report(user_id, int(fb.get("report_id")))
+                        if fb_payload:
+                            fb_team = fb_payload.get("team")
+                            fb_league = fb_payload.get("league")
+                    except Exception:
+                        pass
+                    
                     return jsonify(
                         {
                             "match_suggestion": {
                                 "report_id": fb.get("report_id"),
                                 "player_name": fb.get("player_name"),
+                                "team": fb_team,
+                                "league": fb_league,
                                 "score": fb.get("score"),
                             },
                             "auto_matched": False,
@@ -1764,6 +2204,7 @@ def scout():
         return jsonify({"error": report_md}), 400
 
     # Charge now that generation succeeded
+    logger.info(f"[GENERATION] LLM generated report for '{player}' → charging 1 credit")
     try:
         new_balance = spend_credits(
             user_id,
@@ -1787,7 +2228,10 @@ def scout():
 
     # Save/Upsert into Postgres library (1 row per user/query_key)
     try:
-        cached_flag = bool(payload.get("cached", False))
+        # Force newly generated reports to be marked non-cached both in the DB flag
+        # and in the returned payload so the UI doesn't show "from your library".
+        payload["cached"] = False
+        cached_flag = False
 
         # Persist with `use_web=True` since generation used web search
         insert_query_obj = dict(query_obj)
@@ -1797,16 +2241,16 @@ def scout():
         canonical_player = (
             payload.get("player") or payload.get("player_name") or player
         ).strip()
-        # Use canonical player in the stored query_key so future exact-match lookups use canonical names
-        insert_query_obj["player"] = canonical_player
+        # Use canonical query player (from user input) for query_key deduplication, not LLM's player name
+        insert_query_obj["player"] = canonical_query_player
 
         # Ensure the stored payload includes the original queried name
         payload.setdefault("queried_player", player)
 
-        # Save into local SQLite and return its id as report_id
+        # Save into local SQLite and return its id as report_id (local cache)
         try:
             saved_id = db.save_report(
-                player=canonical_player,
+                player=canonical_query_player,
                 queried_player=player,
                 team=team,
                 league=league,
@@ -1830,25 +2274,103 @@ def scout():
             return jsonify({"error": f"Failed to save local cache: {e}"}), 500
 
         payload["report_id"] = int(saved_id) if saved_id is not None else None
-        # Optionally also upsert into Postgres library so reports appear in the
-        # user's canonical library (the app UI reads Postgres for the profile).
+        # Always write to Postgres as the single source of truth for reports
         try:
-            if os.getenv("DUAL_WRITE", "1").lower() in ("1", "true", "yes"):
-                try:
-                    pg_id = insert_report(
-                        user_id=user_id,
-                        player_name=canonical_player,
-                        query_obj=insert_query_obj,
-                        report_md=report_md,
-                        payload=payload,
-                        cached=cached_flag,
-                    )
-                    payload["library_id"] = int(pg_id)
-                except Exception as e:
-                    # Don't fail the request if Postgres upsert fails; log for debug
-                    logger.warning("Failed to upsert into Postgres library: %s", e)
-        except Exception:
-            pass
+            # If regenerating an existing report, update it by ID instead of creating new
+            if report_id_to_update and refresh:
+                pg_id = update_report_by_id(
+                    user_id=user_id,
+                    report_id=int(report_id_to_update),
+                    player_name=canonical_player,
+                    report_md=report_md,
+                    payload=payload,
+                    cached=cached_flag,
+                )
+                payload["refreshed"] = True  # Mark as refreshed for UI messaging
+            else:
+                pg_id = insert_report(
+                    user_id=user_id,
+                    player_name=canonical_player,
+                    query_obj=insert_query_obj,
+                    report_md=report_md,
+                    payload=payload,
+                    cached=cached_flag,
+                )
+                logger.info(f"[SAVE] Saved report to Postgres: id={pg_id}, canonical_player='{canonical_player}', query_key_player='{canonical_query_player}'")
+            payload["library_id"] = int(pg_id)
+        except Exception as e:
+            # If Postgres write fails, this is a critical error - refund credit
+            logger.error("Failed to save report to Postgres: %s", e)
+            try:
+                refund_credits(
+                    user_id,
+                    1,
+                    reason="refund_postgres_failed",
+                    source_type="scout_request_refund",
+                    source_id=f"{request_id}:refund_pg",
+                )
+            except Exception:
+                pass
+            return jsonify({"error": f"Failed to save report: {e}"}), 500
+
+        # Generate and store embeddings for future similarity matching
+        try:
+            from utils.embeddings import embed_text, store_embedding
+            from db import connect
+            
+            # Create embedding for the player name
+            embed_text_input = f"{canonical_player} {team or ''} {league or ''}".strip()
+            embedding_vector = embed_text(client, embed_text_input)
+            
+            # Store embedding in local SQLite cache
+            conn = None
+            try:
+                conn = connect()
+                # Use Postgres ID for embeddings so suggestions resolve correctly
+                target_id = int(pg_id)
+                store_embedding(conn, target_id, embedding_vector)
+                conn.commit()
+                logger.info(f"[EMBEDDING] Stored embedding for report_id={target_id}")
+            except Exception as e:
+                logger.warning(f"Failed to store embedding for report {target_id}: {e}")
+            finally:
+                # Ensure connection is always closed
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+        except Exception as e:
+            # Embedding storage failure should not block report save
+            logger.warning(f"Failed to generate/store embedding: {e}")
+
+        # Track cost for this report generation
+        try:
+            from db_pg import insert_cost_tracking
+            from utils.app_helpers import estimate_cost, get_model_prices
+            
+            usage = payload.get("usage", {})
+            if usage and usage.get("input_tokens") and usage.get("output_tokens"):
+                prices = get_model_prices(MODEL)
+                estimated_cost = estimate_cost(usage, prices)
+                
+                insert_cost_tracking(
+                    user_id=user_id,
+                    report_id=int(pg_id),
+                    model=MODEL,
+                    input_tokens=usage["input_tokens"],
+                    output_tokens=usage["output_tokens"],
+                    estimated_cost=estimated_cost,
+                    player_name=payload.get("player") or payload.get("player_name") or player,
+                )
+                
+                logger.info(
+                    "Cost tracked for report %s: $%.4f (input: %d, output: %d tokens)",
+                    pg_id, estimated_cost, usage["input_tokens"], usage["output_tokens"]
+                )
+        except Exception as e:
+            # Cost tracking failure should not break the flow
+            logger.warning("Failed to track cost: %s", e)
 
         payload["credits_remaining"] = new_balance
         return jsonify(payload)

@@ -109,7 +109,6 @@ body { overflow-x: hidden; }
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: .5rem;
   background: #ffffff;
   border: 1px solid #e6e7eb; /* matches border-zinc-200 */
   color: #374151; /* text-zinc-700 */
@@ -257,4 +256,32 @@ header.nav-visible {
 .btn-neutral:hover {
   background-color: #fafafa;
   border-color: #a1a1aa;
+}
+
+/* Reports list scrollable container */
+#reports_list {
+  max-height: 600px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  padding-right: 6px; /* keep content off the scrollbar edge */
+}
+
+/* Custom scrollbar for reports list */
+#reports_list::-webkit-scrollbar {
+  width: 8px;
+}
+
+#reports_list::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 4px;
+}
+
+#reports_list::-webkit-scrollbar-thumb {
+  background: #e4e4e7;
+  border-radius: 4px;
+}
+
+#reports_list::-webkit-scrollbar-thumb:hover {
+  background: #d4d4d8;
 }

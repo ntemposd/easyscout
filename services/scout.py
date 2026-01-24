@@ -115,6 +115,7 @@ def get_or_generate_scout_report(
     season: str,
     use_web: bool,
     refresh: bool,
+    user_id: str = None,
 ) -> Dict[str, Any]:
     player = (player or "").strip()
     team = (team or "").strip()
@@ -181,6 +182,17 @@ Write the scouting report now.
     except Exception:
         pass
     report_md = resp.output_text or ""
+    
+    # Capture usage information from the API response
+    usage_data = {}
+    try:
+        if hasattr(resp, 'usage') and resp.usage:
+            usage_data = {
+                "input_tokens": getattr(resp.usage, 'input_tokens', 0),
+                "output_tokens": getattr(resp.usage, 'output_tokens', 0),
+            }
+    except Exception:
+        pass
 
     try:
         # count generated-success events when model returns non-empty output
@@ -190,12 +202,12 @@ Write the scouting report now.
             except Exception:
                 pass
             try:
-                # Track generation event (anonymous if caller doesn't provide user)
+                # Track generation event
                 from utils.app_helpers import track_event
 
                 track_event(
-                    None,
-                    "scout_generated",
+                    user_id,
+                    "report_generated",
                     {
                         "player": player,
                         "team": team,
@@ -235,7 +247,9 @@ Write the scouting report now.
             pass
     except Exception:
         pass
-    return _build_payload_from_report(
+    
+    # Build payload and include usage data
+    payload = _build_payload_from_report(
         report_md=report_md,
         player=canonical_player if canonical_player else player,
         team=team,
@@ -245,3 +259,9 @@ Write the scouting report now.
         use_web=use_web,
         cached=False,
     )
+    
+    # Add usage data to the payload for cost tracking
+    if usage_data:
+        payload["usage"] = usage_data
+    
+    return payload
