@@ -420,9 +420,16 @@ def list_reports(user_id: str, q: str = "", limit: int = 20, offset: int = 0) ->
     try:
         with _get_pool().connection() as conn, conn.cursor() as cur:
             try:
+                # Fetch only minimal payload fields for list performance
                 cur.execute(
                     f"""
-                    select id, player_name, created_at, cached, payload
+                    select id, player_name, created_at, cached,
+                           jsonb_build_object(
+                               'league', payload->>'league',
+                               'team', payload->>'team',
+                               'team_name', payload->>'team_name',
+                               'info_fields', payload->'info_fields'
+                           ) as payload
                     from public.reports
                     where {where}
                     order by created_at desc, id desc

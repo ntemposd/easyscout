@@ -192,7 +192,7 @@
           else if (path === '/404') pageName = '404';
           else pageName = path.replace(/^\//, '').replace(/\//g, '_') || 'root';
           
-          window.trackClientEvent('page_view', { page_name: pageName });
+          window.trackClientEvent('pageview', { page_name: pageName });
         } catch (e) {
           // swallow errors
         }
