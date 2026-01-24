@@ -125,7 +125,6 @@ def sitemap():
 def favicon():
     return app.send_static_file("favicon.ico")
 
-
 # 404 handler: render 404 template without ERROR logs
 @app.errorhandler(404)
 def not_found(e):
@@ -483,17 +482,18 @@ def api_reports():
 
     q = (request.args.get("q") or "").strip()
     try:
-        limit = int(request.args.get("limit") or "1000")
+        limit = int(request.args.get("limit") or "50")  # Default to 50 for pagination
     except ValueError:
-        limit = 1000
+        limit = 50
 
     try:
         offset = int(request.args.get("offset") or "0")
     except ValueError:
         offset = 0
 
-    # Prevent unbounded offsets
+    # Prevent unbounded offsets and reasonable max limit
     offset = max(offset, 0)
+    limit = min(limit, 100)  # Cap at 100 per request for performance
 
     try:
         items = list_reports(user_id, q=q, limit=limit, offset=offset)

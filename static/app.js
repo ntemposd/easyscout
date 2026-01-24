@@ -22,41 +22,71 @@ const sb = window.sb;
     }
   };
     // ---------- Reports sidebar (library) ----------
-    async function loadReports(q = "") {
+    let reportsState = {
+      items: [],
+      total: 0,
+      loading: false,
+      hasMore: true,
+    };
+
+    async function loadReports(q = "", reset = true) {
       const listEl = $("reports_list");
       const countEl = $("reports_count");
       if (!listEl) return;
 
-      try {
+      // Reset state on new search
+      if (reset) {
+        reportsState.items = [];
+        reportsState.total = 0;
+        reportsState.hasMore = true;
         listEl.innerHTML = '<div class="text-sm text-zinc-500">Loading…</div>';
         if (countEl) countEl.textContent = "0";
+      }
+
+      // Prevent duplicate simultaneous requests
+      if (reportsState.loading || !reportsState.hasMore) return;
+      reportsState.loading = true;
+
+      try {
+        const offset = reportsState.items.length;
+        const limit = 50;
 
         const token = await (window.getAccessToken ? window.getAccessToken() : null);
-        const res = await fetch(`/api/reports?q=${encodeURIComponent(q || "")}&limit=500`, {
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-        });
+        const res = await fetch(
+          `/api/reports?q=${encodeURIComponent(q || "")}&limit=${limit}&offset=${offset}`,
+          {
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+          }
+        );
 
         if (res.status === 401) {
           listEl.innerHTML = '<div class="text-sm text-red-600">Please log in to view your reports.</div>';
           if (countEl) countEl.textContent = "0";
+          reportsState.loading = false;
           return;
         }
 
         const data = await res.json().catch(() => ({}));
-        const items = Array.isArray(data.items) ? data.items : [];
-        const total = Number.isFinite(data.total) ? data.total : items.length;
+        const newItems = Array.isArray(data.items) ? data.items : [];
+        const total = Number.isFinite(data.total) ? data.total : 0;
 
-        if (countEl) countEl.textContent = `${total ?? 0}`;
+        reportsState.items.push(...newItems);
+        reportsState.total = total;
+        reportsState.hasMore = newItems.length === limit && reportsState.items.length < total;
+        reportsState.loading = false;
 
-        if (!items.length) {
+        if (countEl) countEl.textContent = `${total}`;
+
+        if (!reportsState.items.length) {
           listEl.innerHTML = '<div class="text-sm text-zinc-500">No reports yet.</div>';
           return;
         }
 
-        listEl.innerHTML = items
+        // Render all items
+        listEl.innerHTML = reportsState.items
           .map((item) => {
             const player = escapeHtml(item.player_name || "Unknown");
             const position = escapeHtml(item.position || "Unknown");
@@ -67,10 +97,26 @@ const sb = window.sb;
               </button>
             `;
           })
-          .join("");
+          .join("") + 
+          (reportsState.hasMore ? '<div id="reports_loading" class="text-sm text-zinc-500 text-center py-2">Scroll for more…</div>' : '');
+
+        // Setup scroll listener only once
+        const container = listEl.parentElement;
+        if (container && !container._scrollSetup && reportsState.hasMore) {
+          container._scrollSetup = true;
+          container.addEventListener("scroll", () => {
+            const { scrollTop, scrollHeight, clientHeight } = container;
+            if (!reportsState.loading && reportsState.hasMore && scrollHeight - scrollTop - clientHeight < 300) {
+              loadReports(q, false);
+            }
+          });
+        }
       } catch (err) {
         console.error("loadReports failed", err);
-        listEl.innerHTML = '<div class="text-sm text-red-600">Failed to load reports.</div>';
+        reportsState.loading = false;
+        if (reset) {
+          listEl.innerHTML = '<div class="text-sm text-red-600">Failed to load reports.</div>';
+        }
       }
     }
 
