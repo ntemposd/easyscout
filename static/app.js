@@ -733,6 +733,12 @@ const sb = window.sb;
         window._regenerateReportId = null; // Clear it after use
       }
 
+      // Store button text to preserve it after disabling/enabling
+      const runBtn = $("run");
+      if (runBtn) {
+        runBtn.dataset.originalText = runBtn.textContent;
+      }
+
       setText("status", "Working…");
       $("run").disabled = true;
       // Clear the report pane completely before generating new report
@@ -1066,7 +1072,14 @@ const sb = window.sb;
         setText("status");
       } finally {
         window._scoutRunning = false;
-        $("run").disabled = false;
+        const runBtn = $("run");
+        if (runBtn) {
+          runBtn.disabled = false;
+          // Restore button text from data attribute
+          if (runBtn.dataset.originalText) {
+            runBtn.textContent = runBtn.dataset.originalText;
+          }
+        }
         setScoutLoader(false);
       }
     });

@@ -633,6 +633,23 @@ def api_report(report_id: int):
     return jsonify(payload)
 
 
+_playwright_installed = False
+
+def ensure_playwright_browsers():
+    """Ensure Playwright browsers are installed (runtime check for Render)."""
+    global _playwright_installed
+    if _playwright_installed:
+        return
+    try:
+        import subprocess
+        logger.info("Installing Playwright browsers (first-time runtime setup)...")
+        subprocess.run(["python", "-m", "playwright", "install", "chromium"], check=True, timeout=120)
+        _playwright_installed = True
+        logger.info("Playwright browsers installed successfully.")
+    except Exception as e:
+        logger.warning(f"Playwright browser install failed (may already be installed): {e}")
+        _playwright_installed = True  # Assume installed to avoid retries
+
 @app.get("/api/reports/<int:report_id>/pdf")
 def api_report_pdf(report_id: int):
     """Generate and download a scouting report as PDF using Playwright (Chromium)."""
@@ -640,6 +657,9 @@ def api_report_pdf(report_id: int):
         user_id = require_user_id(request)
     except PermissionError as e:
         return jsonify({"error": str(e)}), 401
+    
+    # Ensure browsers are installed (lazy init for Render)
+    ensure_playwright_browsers()
 
     # Fetch report same way as /api/reports/<id>
     payload = None

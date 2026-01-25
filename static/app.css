@@ -33,7 +33,7 @@
 
 /* Section header / description consistent spacing helpers */
 .section-title { margin-bottom: 0 !important; }
-.section-desc { margin-top: 0.05rem !important; margin-bottom: 0.5rem !important; color: rgba(100,116,139,var(--tw-text-opacity,1)); }
+.section-desc { margin-top: 0.05rem !important; margin-bottom: 0.1rem !important; color: rgba(100,116,139,var(--tw-text-opacity,1)); }
 
 /* Hide login/logout buttons while auth check runs to avoid brief flash */
 .auth-checking #login_link,

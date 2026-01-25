@@ -190,7 +190,7 @@
           else if (path === '/404') pageName = '404';
           else pageName = path.replace(/^\//, '').replace(/\//g, '_') || 'root';
           
-          window.trackClientEvent('pageview', { page_name: pageName });
+          window.trackClientEvent('Pageview', { page_name: pageName });
         } catch (e) {
           // swallow errors
         }
@@ -266,7 +266,7 @@
 
     {% block scripts %}{% endblock %}
 
-    <script src="/static/app.js?v=20250123-1"></script>
+    <script src="/static/app.js?v=20250125-1"></script>
     <script>
       (function() {
         // Hide navbar on scroll down, show on scroll up.
