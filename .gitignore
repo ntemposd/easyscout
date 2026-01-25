@@ -211,6 +211,7 @@ documents/
 migrations/
 scripts/
 prompts/scout_instructions.txt
+node_modules/
 
 # Database files
 *.db

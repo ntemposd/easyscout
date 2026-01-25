@@ -12,18 +12,19 @@
     <meta property="og:title" content="{% block og_title %}Easyscout - AI Basketball Scouting{% endblock %}" />
     <meta property="og:description" content="{% block og_description %}Generate professional basketball scouting reports instantly with AI.{% endblock %}" />
     <meta property="og:url" content="{{ request.url }}" />
-    <!-- Add your logo/image: <meta property="og:image" content="https://yourdomain.com/static/og-image.png" /> -->
+    <meta property="og:image" content="{{ request.url_root }}static/opengraph.png" />
     
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="{% block twitter_title %}Easyscout - AI Basketball Scouting{% endblock %}" />
     <meta name="twitter:description" content="{% block twitter_description %}Generate professional basketball scouting reports instantly.{% endblock %}" />
+    <meta name="twitter:image" content="{{ request.url_root }}static/opengraph.png" />
     
     <!-- Favicon -->
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
 
-    <!-- Tailwind (MVP) -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Tailwind built locally -->
+    <link rel="stylesheet" href="/static/tailwind.css">
     <link rel="stylesheet" href="/static/app.css">
     
     <script>
@@ -90,18 +91,15 @@
     <footer class="border-t border-zinc-200 mt-8">
       <div class="max-w-6xl mx-auto px-4 py-6 text-sm text-zinc-500 flex flex-col sm:flex-row gap-2 justify-between">
         <span>
-          © {{ current_year or "2026" }} Easyscout
-        </span>
-
-        <span>
-          Built with 🧡 by
+          © {{ current_year or "2026" }} · Built with 🧡 by
           <a href="https://ntemposd.me" class="underline hover:text-zinc-700">
             ntemposd
           </a>
         </span>
 
-        <span>
-          <a href="/privacy" class="underline hover:text-zinc-700">Privacy policy</a>
+        <span class="flex gap-4">
+          <a href="/privacy" class="hover:underline hover:text-zinc-700">Privacy policy</a>
+          <a href="https://github.com/ntemposd/easyscout" target="_blank" rel="noopener noreferrer" class="hover:underline hover:text-zinc-700">Source code</a>
         </span>
       </div>
     </footer>

@@ -556,6 +556,9 @@ const sb = window.sb;
         </div>
 
         <div class="flex items-center gap-2">
+          <button id="download_pdf_btn" class="text-sm px-3 py-1 rounded-md border border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-medium transition-colors" title="Download report as PDF">
+            ⬇️ Download PDF
+          </button>  
           <button id="regenerate_report_btn" class="text-sm px-3 py-1 rounded-md border border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-medium transition-colors" data-player="${escapeHtml(playerName)}" data-team="${escapeHtml(playerTeam)}" data-report-id="${escapeHtml(reportId)}">
             ✨ Regenerate
           </button>
@@ -630,6 +633,47 @@ const sb = window.sb;
         } catch (err) {
           console.error("Error handling regenerate button:", err);
         }
+      });
+
+      // Handle PDF download button clicks
+      outHtml.addEventListener("click", (e) => {
+        const btn = e.target.closest("#download_pdf_btn");
+        if (!btn) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        (async () => {
+          try {
+            const reportId = window._regenerateReportId;
+            if (!reportId) {
+              alert("No report to download. Generate a report first.");
+              return;
+            }
+            const token = await (window.getAccessToken ? window.getAccessToken() : null);
+            const response = await fetch(`/api/reports/${reportId}/pdf`, {
+              headers: token ? { Authorization: `Bearer ${token}` } : {}
+            });
+            if (!response.ok) {
+              throw new Error(`Download failed: ${response.status}`);
+            }
+            const disposition = response.headers.get('Content-Disposition') || '';
+            const match = disposition.match(/filename="?([^";]+)"?/i);
+            const filename = (match && match[1]) ? match[1] : `scout_report_${reportId}.pdf`;
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+            window.trackClientEvent?.('report_downloaded', { report_id: reportId });
+          } catch (err) {
+            console.error('PDF download failed:', err);
+            alert('Failed to download PDF: ' + (err.message || 'Unknown error'));
+          }
+        })();
       });
     }
 
@@ -968,6 +1012,14 @@ const sb = window.sb;
 
         // Enable drag-to-scroll on report tables
         window.enableTableDragScroll?.();
+
+        // Show PDF download button if report has an ID
+        try {
+          const downloadBtn = $("download_pdf_btn");
+          if (downloadBtn && data.report_id) {
+            downloadBtn.classList.remove("hidden");
+          }
+        } catch (err) {}
 
         // Track report_rendered (always, with source indicating where it came from)
         try {

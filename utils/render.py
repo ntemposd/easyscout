@@ -68,6 +68,8 @@ def ensure_parsed_payload(payload: Dict) -> Dict:
 
 # IMPORTANT: linkify=False so markdown-it doesn't turn domains into <a>
 _md = MarkdownIt("commonmark", {"html": False, "linkify": False, "typographer": True})
+# Enable GitHub-style tables so report markdown renders structured data correctly
+_md.enable("table")
 
 _ALLOWED_TAGS = list(bleach.sanitizer.ALLOWED_TAGS) + [
     "p",
