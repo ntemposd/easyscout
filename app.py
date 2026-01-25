@@ -716,6 +716,7 @@ def api_report_pdf(report_id: int):
 
         # Add structured tables (season snapshot, last games, info fields, grades) when present
         def render_kv_table(title: str, data: dict) -> str:
+            """Render a simple key/value table with a heading outside the table element."""
             if not data:
                 return ""
             rows = "".join(
@@ -723,9 +724,10 @@ def api_report_pdf(report_id: int):
             )
             if not rows:
                 return ""
-            return f"<h2>{title}</h2><table>{rows}</table>"
+            return f"<div class=\"section-block\"><h2 class=\"table-title\">{title}</h2><table>{rows}</table></div>"
 
         def render_list_table(title: str, items: list) -> str:
+            """Render a list of dicts as a table with a separate heading block."""
             if not items:
                 return ""
             # Determine headers from first item keys for consistency
@@ -739,7 +741,12 @@ def api_report_pdf(report_id: int):
                 for it in items
                 if isinstance(it, dict)
             )
-            return f"<h2>{title}</h2><table><thead><tr>{header_html}</tr></thead><tbody>{body_html}</tbody></table>"
+            return (
+                f"<div class=\"section-block\">"
+                f"<h2 class=\"table-title\">{title}</h2>"
+                f"<table><thead><tr>{header_html}</tr></thead><tbody>{body_html}</tbody></table>"
+                f"</div>"
+            )
 
         extra_sections = []
 
@@ -773,7 +780,9 @@ def api_report_pdf(report_id: int):
         p { margin: 8px 0; font-size: 11.5px; line-height: 1.6; }
         ul { margin: 10px 0 10px 18px; padding: 0; }
         li { margin: 5px 0; font-size: 11.5px; }
-        table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 11px; }
+        .section-block { margin: 18px 0 14px 0; }
+        .table-title { margin: 0 0 8px 0; font-size: 14px; color: #0E2018; }
+        table { width: 100%; border-collapse: collapse; margin: 6px 0 12px 0; font-size: 11px; }
         td, th { border: 1px solid #e5e7eb; padding: 8px; text-align: left; }
         th { background: #f3f4f6; color: #111827; font-weight: 600; }
         .footer { margin-top: 28px; padding-top: 12px; border-top: 1px solid #e5e7eb; font-size: 10px; color: #6b7280; text-align: center; }

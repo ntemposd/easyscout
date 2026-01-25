@@ -6,13 +6,13 @@
 
   <!-- Hero -->
   <section class="space-y-8">
-    <div class="grid lg:grid-cols-[2fr_360px] gap-8 items-start">
-      <div class="text-center lg:text-left max-w-3xl space-y-4">
+    <div class="grid gap-8 items-start lg:grid-cols-[2fr_360px]">
+      <div class="text-center lg:text-left max-w-3xl space-y-4 mx-auto lg:mx-0">
         <h1 class="text-5xl md:text-6xl font-extrabold tracking-tight text-zinc-900">
           Scouting reports made <span class="bg-gradient-to-r from-[#F68A1F] to-[#6FD06B] bg-clip-text text-transparent">easy</span>
         </h1>
         <p class="text-lg text-zinc-700">
-          Generate crisp, coach-ready scouting reports instantly. Capture latest stats and insights on any professional basketball player. Pay as you go: 1 credit = €1 per report.
+          Generate crisp, coach-ready reports instantly. Get the latest stats and insights on any professional basketball player. Pay as you go: €1 per report.
         </p>
 
         <div class="flex flex-wrap justify-center lg:justify-start gap-3 pt-4">
@@ -29,7 +29,7 @@
       </div>
 
       <!-- Sidebar: Feature highlights -->
-      <aside class="space-y-4 h-full">
+      <aside class="space-y-4 h-full w-full lg:w-auto">
         <div class="bg-white border border-zinc-200 rounded-xl p-6 shadow-sm space-y-4 h-full">
           <div class="space-y-3">
             <div class="flex items-start gap-3">
@@ -44,14 +44,14 @@
               <div class="text-2xl">📸</div>
               <div>
                 <div class="font-semibold text-sm">Season snapshots</div>
-                <div class="text-sm text-zinc-600">Quick stats tables for context</div>
+                <div class="text-sm text-zinc-600">Recent stats at a glance</div>
               </div>
             </div>
 
             <div class="flex items-start gap-3">
               <div class="text-2xl">🎯</div>
               <div>
-                <div class="font-semibold text-sm">Coach-ready analysis</div>
+                <div class="font-semibold text-sm">Pro-grade analysis</div>
                 <div class="text-sm text-zinc-600">Strengths, weaknesses, gameplan notes</div>
               </div>
             </div>
@@ -67,7 +67,7 @@
 
           <div class="pt-3 border-t border-zinc-200">
             <a href="/login" data-analytics-cta="sidebar_cta" class="block w-full text-center btn-primary">
-              Login to start
+              Start scouting
             </a>
           </div>
         </div>
@@ -80,7 +80,7 @@
   <section id="demo" class="space-y-6">
     <div class="text-center lg:text-left space-y-2">
       <h2 class="text-4xl font-extrabold tracking-tight">See it in action</h2>
-      <p class="text-lg text-zinc-600">Live preview of a Giannis Antetokounmpo scouting report</p>
+      <p class="text-lg text-zinc-600">Preview of a generated player report</p>
     </div>
 
     <!-- Main content: demo form + report -->
@@ -106,7 +106,7 @@
             <a href="/login"
               data-analytics-cta="demo_form"
               class="btn-primary inline-block">
-              Login to generate this report
+              Generate this report
             </a>
             <span class="text-sm text-zinc-500">Costs 1 credit (€1)</span>
           </div>
@@ -114,8 +114,8 @@
 
         <!-- Report output -->
         <div class="space-y-0">
-          <h3 class="text-2xl font-extrabold tracking-tight section-title">Report</h3>
-          <p class="text-sm section-desc text-zinc-600">Sample preview of a generated report.</p>
+          <h3 class="text-2xl font-extrabold tracking-tight section-title">Player Report</h3>
+          <p class="text-sm section-desc text-zinc-600">Sample output from Easyscout.</p>
         </div>
         
         <div class="space-y-4">
@@ -125,63 +125,43 @@
           </div>
 
             <div class="grid sm:grid-cols-2 gap-4">
-              <section class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-                <div class="text-sm font-semibold text-zinc-900">Info</div>
-                <div class="mt-3 overflow-auto">
-                  <table class="w-full text-sm border-collapse">
-                    <tbody>
-                      <tr class="border-t border-zinc-200">
-                        <td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Team</td>
-                        <td class="py-2 font-medium whitespace-pre-line break-words">Milwaukee Bucks</td>
-                      </tr>
-                      <tr class="border-t border-zinc-200">
-                        <td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">League</td>
-                        <td class="py-2 font-medium whitespace-pre-line break-words">NBA</td>
-                      </tr>
-                      <tr class="border-t border-zinc-200">
-                        <td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Position</td>
-                        <td class="py-2 font-medium whitespace-pre-line break-words">F / C</td>
-                      </tr>
-                      <tr class="border-t border-zinc-200">
-                        <td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Nationality</td>
-                        <td class="py-2 font-medium whitespace-pre-line break-words">Greece / Nigeria</td>
-                      </tr>
-                      <tr class="border-t border-zinc-200">
-                        <td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Height</td>
-                        <td class="py-2 font-medium whitespace-pre-line break-words">6'11"</td>
-                      </tr>
-                      <tr class="border-t border-zinc-200">
-                        <td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Weight</td>
-                        <td class="py-2 font-medium whitespace-pre-line break-words">243 lb</td>
-                      </tr>
-                      <tr class="border-t border-zinc-200">
-                        <td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Age / Birthdate</td>
-                        <td class="py-2 font-medium whitespace-pre-line break-words">31 · Dec 6, 1994</td>
-                      </tr>
-                      <tr class="border-t border-zinc-200">
-                        <td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Dominant hand</td>
-                        <td class="py-2 font-medium whitespace-pre-line break-words">Right</td>
-                      </tr>
-                    </tbody>
-                  </table>
+              <section class="space-y-2">
+                <h3 class="text-sm font-semibold text-zinc-900">Info</h3>
+                <div class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+                  <div class="overflow-auto">
+                    <table class="w-full text-sm border-collapse">
+                      <tbody>
+                        <tr><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Team</td><td class="py-2 font-medium whitespace-pre-line break-words">Milwaukee Bucks</td></tr>
+                        <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">League</td><td class="py-2 font-medium whitespace-pre-line break-words">NBA</td></tr>
+                        <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Position</td><td class="py-2 font-medium whitespace-pre-line break-words">F / C</td></tr>
+                        <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Nationality</td><td class="py-2 font-medium whitespace-pre-line break-words">Greece / Nigeria</td></tr>
+                        <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Height</td><td class="py-2 font-medium whitespace-pre-line break-words">6'11"</td></tr>
+                        <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Weight</td><td class="py-2 font-medium whitespace-pre-line break-words">243 lb</td></tr>
+                        <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Age / Birthdate</td><td class="py-2 font-medium whitespace-pre-line break-words">31 · Dec 6, 1994</td></tr>
+                        <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Dominant hand</td><td class="py-2 font-medium whitespace-pre-line break-words">Right</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </section>
 
-              <section class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-                <div class="text-sm font-semibold text-zinc-900">Grades</div>
-                <div class="mt-3 overflow-auto">
-                  <table class="w-full text-sm border-collapse">
-                    <tbody>
-                      <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Shooting</td><td class="py-2 font-medium whitespace-pre-line break-words">3.1/5</td></tr>
-                      <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Finishing</td><td class="py-2 font-medium whitespace-pre-line break-words">4.8/5</td></tr>
-                      <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Playmaking</td><td class="py-2 font-medium whitespace-pre-line break-words">4.2/5</td></tr>
-                      <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Handle</td><td class="py-2 font-medium whitespace-pre-line break-words">3.8/5</td></tr>
-                      <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Defense</td><td class="py-2 font-medium whitespace-pre-line break-words">4.6/5</td></tr>
-                      <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Rebounding</td><td class="py-2 font-medium whitespace-pre-line break-words">4.7/5</td></tr>
-                      <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Athleticism</td><td class="py-2 font-medium whitespace-pre-line break-words">4.9/5</td></tr>
-                      <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">IQ / Decision-making</td><td class="py-2 font-medium whitespace-pre-line break-words">4.5/5</td></tr>
-                    </tbody>
-                  </table>
+              <section class="space-y-2">
+                <h3 class="text-sm font-semibold text-zinc-900">Grades</h3>
+                <div class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+                  <div class="overflow-auto">
+                    <table class="w-full text-sm border-collapse">
+                      <tbody>
+                        <tr><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Shooting</td><td class="py-2 font-medium whitespace-pre-line break-words">3.1/5</td></tr>
+                        <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Finishing</td><td class="py-2 font-medium whitespace-pre-line break-words">4.8/5</td></tr>
+                        <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Playmaking</td><td class="py-2 font-medium whitespace-pre-line break-words">4.2/5</td></tr>
+                        <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Handle</td><td class="py-2 font-medium whitespace-pre-line break-words">3.8/5</td></tr>
+                        <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Defense</td><td class="py-2 font-medium whitespace-pre-line break-words">4.6/5</td></tr>
+                        <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Rebounding</td><td class="py-2 font-medium whitespace-pre-line break-words">4.7/5</td></tr>
+                        <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">Athleticism</td><td class="py-2 font-medium whitespace-pre-line break-words">4.9/5</td></tr>
+                        <tr class="border-t border-zinc-200"><td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">IQ / Decision-making</td><td class="py-2 font-medium whitespace-pre-line break-words">4.5/5</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </section>
             </div>
@@ -222,86 +202,90 @@
               </div>
             </section>
 
-            <section class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-              <div class="text-sm font-semibold text-zinc-900">Season Snapshot</div>
-              <div class="mt-3 overflow-auto">
-                <table class="w-full text-sm border-collapse" style="table-layout:fixed;">
-                  <colgroup>
-                    <col style="width:220px" />
-                    <col style="width:88px" />
-                    <col style="width:88px" />
-                    <col style="width:88px" />
-                    <col style="width:88px" />
-                  </colgroup>
-                  <thead>
-                    <tr class="border-b border-zinc-200">
-                      <th class="py-2 pr-4 text-left text-zinc-500 font-medium">GAMES</th>
-                      <th class="py-2 pl-4 text-right text-zinc-500 font-medium">PTS</th>
-                      <th class="py-2 pl-4 text-right text-zinc-500 font-medium">REB</th>
-                      <th class="py-2 pl-4 text-right text-zinc-500 font-medium">AST</th>
-                      <th class="py-2 pl-4 text-right text-zinc-500 font-medium">FG</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr class="border-t border-zinc-200">
-                      <td class="py-2 pr-4 text-left font-medium">73</td>
-                      <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">30.4</td>
-                      <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">11.5</td>
-                      <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">6.5</td>
-                      <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">61.1%</td>
-                    </tr>
-                  </tbody>
-                </table>
+            <section class="space-y-2">
+              <h3 class="text-sm font-semibold text-zinc-900">Season Snapshot</h3>
+              <div class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+                <div class="overflow-auto">
+                  <table class="w-full text-sm border-collapse" style="table-layout:fixed;">
+                    <colgroup>
+                      <col style="width:220px" />
+                      <col style="width:88px" />
+                      <col style="width:88px" />
+                      <col style="width:88px" />
+                      <col style="width:88px" />
+                    </colgroup>
+                    <thead>
+                      <tr class="border-b border-zinc-200">
+                        <th class="py-2 pr-4 text-left text-zinc-500 font-medium">GAMES</th>
+                        <th class="py-2 pl-4 text-right text-zinc-500 font-medium">PTS</th>
+                        <th class="py-2 pl-4 text-right text-zinc-500 font-medium">REB</th>
+                        <th class="py-2 pl-4 text-right text-zinc-500 font-medium">AST</th>
+                        <th class="py-2 pl-4 text-right text-zinc-500 font-medium">FG</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td class="py-2 pr-4 text-left font-medium">73</td>
+                        <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">30.4</td>
+                        <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">11.5</td>
+                        <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">6.5</td>
+                        <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">61.1%</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div class="mt-2 text-xs text-zinc-500">(Demo numbers only)</div>
               </div>
-              <div class="mt-2 text-xs text-zinc-500">(Demo numbers only)</div>
             </section>
 
-            <section class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-              <div class="text-sm font-semibold text-zinc-900">Last 3 Games</div>
-              <div class="mt-3 overflow-auto">
-                <table class="w-full text-sm border-collapse" style="table-layout:fixed;">
-                  <colgroup>
-                    <col style="width:220px" />
-                    <col style="width:88px" />
-                    <col style="width:88px" />
-                    <col style="width:88px" />
-                    <col style="width:88px" />
-                  </colgroup>
-                  <thead>
-                    <tr class="border-b border-zinc-200">
-                      <th class="py-2 pr-4 text-left text-zinc-500 font-medium">OPP</th>
-                      <th class="py-2 pl-4 text-right text-zinc-500 font-medium">PTS</th>
-                      <th class="py-2 pl-4 text-right text-zinc-500 font-medium">REB</th>
-                      <th class="py-2 pl-4 text-right text-zinc-500 font-medium">AST</th>
-                      <th class="py-2 pl-4 text-right text-zinc-500 font-medium">FG</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr class="border-t border-zinc-200">
-                      <td class="py-2 pr-4 text-left font-medium">@PHI</td>
-                      <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">35</td>
-                      <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">12</td>
-                      <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">6</td>
-                      <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">59%</td>
-                    </tr>
-                    <tr class="border-t border-zinc-200">
-                      <td class="py-2 pr-4 text-left font-medium">vs BOS</td>
-                      <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">32</td>
-                      <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">10</td>
-                      <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">7</td>
-                      <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">55%</td>
-                    </tr>
-                    <tr class="border-t border-zinc-200">
-                      <td class="py-2 pr-4 text-left font-medium">@ MIA</td>
-                      <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">28</td>
-                      <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">9</td>
-                      <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">5</td>
-                      <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">52%</td>
-                    </tr>
-                  </tbody>
-                </table>
+            <section class="space-y-2">
+              <h3 class="text-sm font-semibold text-zinc-900">Last 3 Games</h3>
+              <div class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+                <div class="overflow-auto">
+                  <table class="w-full text-sm border-collapse" style="table-layout:fixed;">
+                    <colgroup>
+                      <col style="width:220px" />
+                      <col style="width:88px" />
+                      <col style="width:88px" />
+                      <col style="width:88px" />
+                      <col style="width:88px" />
+                    </colgroup>
+                    <thead>
+                      <tr class="border-b border-zinc-200">
+                        <th class="py-2 pr-4 text-left text-zinc-500 font-medium">OPP</th>
+                        <th class="py-2 pl-4 text-right text-zinc-500 font-medium">PTS</th>
+                        <th class="py-2 pl-4 text-right text-zinc-500 font-medium">REB</th>
+                        <th class="py-2 pl-4 text-right text-zinc-500 font-medium">AST</th>
+                        <th class="py-2 pl-4 text-right text-zinc-500 font-medium">FG</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td class="py-2 pr-4 text-left font-medium">@PHI</td>
+                        <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">35</td>
+                        <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">12</td>
+                        <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">6</td>
+                        <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">59%</td>
+                      </tr>
+                      <tr class="border-t border-zinc-200">
+                        <td class="py-2 pr-4 text-left font-medium">vs BOS</td>
+                        <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">32</td>
+                        <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">10</td>
+                        <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">7</td>
+                        <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">55%</td>
+                      </tr>
+                      <tr class="border-t border-zinc-200">
+                        <td class="py-2 pr-4 text-left font-medium">@ MIA</td>
+                        <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">28</td>
+                        <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">9</td>
+                        <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">5</td>
+                        <td class="py-2 pl-4 text-right font-medium" style="font-variant-numeric: tabular-nums;">52%</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div class="mt-2 text-xs text-zinc-500">(Demo numbers only)</div>
               </div>
-              <div class="mt-2 text-xs text-zinc-500">(Demo numbers only)</div>
             </section>
           </div>
         </div>
@@ -311,9 +295,9 @@
   <!-- Footer CTA -->
   <section class="bg-gradient-to-br from-[#0E2018] to-[#1A2E1C] text-white rounded-2xl p-8 md:p-12 shadow-lg">
     <div class="text-center space-y-4">
-      <h2 class="text-3xl font-extrabold tracking-tight">Ready to scout like a pro?</h2>
+      <h2 class="text-3xl font-extrabold tracking-tight">Ready to generate pro-grade reports?</h2>
       <p class="text-zinc-300">
-        Join coaches and analysts using Easyscout to generate instant, actionable scouting reports.
+        Used by coaches, analysts, and basketball fans to generate instant player reports.
       </p>
       <div class="pt-2">
         <a href="/login" data-analytics-cta="footer" 

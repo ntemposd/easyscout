@@ -223,23 +223,25 @@ const sb = window.sb;
   // ---------- UI render components ----------
   function renderCardTable(title, rows) {
     return `
-      <section class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-        <div class="text-sm font-semibold text-zinc-900">${escapeHtml(title)}</div>
-        <div class="mt-3 overflow-auto">
-          <table class="w-full text-sm border-collapse">
-            <tbody>
-              ${rows
-                .map(
-                  (r) => `
-                    <tr class="border-t border-zinc-200">
-                      <td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">${escapeHtml(r.key)}</td>
-                      <td class="py-2 font-medium whitespace-normal sm:whitespace-nowrap">${escapeHtml(cleanValue(r.val, "Unknown"))}</td>
-                    </tr>
-                  `
-                )
-                .join("")}
-            </tbody>
-          </table>
+      <section class="space-y-2">
+        <h3>${escapeHtml(title)}</h3>
+        <div class="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <div class="overflow-auto">
+            <table class="w-full text-sm border-collapse">
+              <tbody>
+                ${rows
+                  .map(
+                    (r, idx) => `
+                      <tr class="${idx === 0 ? "" : "border-t border-zinc-200"}">
+                        <td class="py-2 pr-4 text-zinc-500 whitespace-normal sm:whitespace-nowrap align-top">${escapeHtml(r.key)}</td>
+                        <td class="py-2 font-medium whitespace-normal sm:whitespace-nowrap">${escapeHtml(cleanValue(r.val, "Unknown"))}</td>
+                      </tr>
+                    `
+                  )
+                  .join("")}
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
     `;
@@ -274,47 +276,47 @@ const sb = window.sb;
     `;
 
     return `
-      <section class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-        <div class="text-sm font-semibold text-zinc-900">${escapeHtml(title)}</div>
-
-        <div class="mt-3 custom-scrollbar" style="overflow-x: auto; -webkit-overflow-scrolling: touch;">
-          <table class="text-sm border-collapse" style="table-layout:fixed; min-width: 100%; white-space: nowrap;">
-            ${colgroup}
-            <thead>
-              <tr class="border-b border-zinc-200">
-                ${headers
+      <section class="space-y-2">
+        <h3>${escapeHtml(title)}</h3>
+        <div class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+          <div class="custom-scrollbar" style="overflow-x: auto; -webkit-overflow-scrolling: touch;">
+            <table class="text-sm border-collapse" style="table-layout:fixed; min-width: 100%; white-space: nowrap;">
+              ${colgroup}
+              <thead>
+                <tr class="border-b border-zinc-200">
+                  ${headers
+                    .map(
+                      (h, idx) => `
+                        <th class="py-2 ${idx === 0 ? "pr-4" : "pl-4"} ${align(idx)} text-zinc-500 font-medium">
+                          ${escapeHtml(h)}
+                        </th>`
+                    )
+                    .join("")}
+                </tr>
+              </thead>
+              <tbody>
+                ${rows
                   .map(
-                    (h, idx) => `
-                      <th class="py-2 ${idx === 0 ? "pr-4" : "pl-4"} ${align(idx)} text-zinc-500 font-medium">
-                        ${escapeHtml(h)}
-                      </th>`
+                    (r) => `
+                      <tr class="border-t border-zinc-200">
+                        ${r
+                          .map(
+                            (cell, idx) => `
+                              <td class="py-2 ${idx === 0 ? "pr-4" : "pl-4"} ${align(idx)} font-medium" style="${
+                                idx === 0 ? "" : "font-variant-numeric: tabular-nums;"
+                              }">
+                                ${escapeHtml(cleanValue(cell, "—"))}
+                              </td>`
+                          )
+                          .join("")}
+                      </tr>`
                   )
                   .join("")}
-              </tr>
-            </thead>
-            <tbody>
-              ${rows
-                .map(
-                  (r) => `
-                    <tr class="border-t border-zinc-200">
-                      ${r
-                        .map(
-                          (cell, idx) => `
-                            <td class="py-2 ${idx === 0 ? "pr-4" : "pl-4"} ${align(idx)} font-medium" style="${
-                              idx === 0 ? "" : "font-variant-numeric: tabular-nums;"
-                            }">
-                              ${escapeHtml(cleanValue(cell, "—"))}
-                            </td>`
-                        )
-                        .join("")}
-                    </tr>`
-                )
-                .join("")}
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
+          ${note ? `<div class="mt-2 text-xs text-zinc-500">${escapeHtml(String(note).trim())}</div>` : ""}
         </div>
-
-        ${note ? `<div class="mt-2 text-xs text-zinc-500">${escapeHtml(String(note).trim())}</div>` : ""}
       </section>
     `;
   }
@@ -569,7 +571,7 @@ const sb = window.sb;
           ${renderGradesTable(grades)}
         </div>
 
-        <section class="pt-2">
+        <section>
           <div class="leading-relaxed break-words text-sm
             [&_h1]:text-xl [&_h1]:font-bold [&_h1]:mt-4 [&_h1]:mb-2
             [&_h2]:text-lg [&_h2]:font-bold [&_h2]:mt-4 [&_h2]:mb-2
