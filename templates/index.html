@@ -24,7 +24,7 @@
       <!-- Generate -->
       <div class="space-y-0 mt-0">
           <h2 class="text-3xl font-extrabold tracking-tight section-title">New report</h2>
-          <p class="text-base section-desc">Create a coach-ready scouting report in seconds.</p>
+          <p class="text-base section-desc">Create a pro-grade report.</p>
       </div>
       <!--Reports are cache-first; enable web search to include broader sources.-->
       <section class="bg-white border border-zinc-200 rounded-xl p-6 shadow-sm">
@@ -63,11 +63,11 @@
               Use web search (costs more)
             </label>
 
-            <label class="inline-flex items-center gap-2">
+            <!--<label class="inline-flex items-center gap-2">
               <input id="refresh" type="checkbox"
                 class="rounded border-zinc-300 text-[#6FD06B] focus:ring-[#6FD06B]" />
-              Force new report
-            </label>
+              Update with latest data
+            </label>-->
           </fieldset>
 
           <div class="flex items-center flex-wrap gap-2">
@@ -99,7 +99,7 @@
       <!-- Output -->
       <div class="space-y-0 mt-0">
           <h2 class="text-3xl font-extrabold tracking-tight section-title">Player report</h2>
-          <p class="text-base section-desc">Use the Generate button to create a report.</p>
+          <p class="text-base section-desc">Key traits, stats, and role.</p>
       </div>
       <section class="bg-white border border-zinc-200 rounded-xl p-6 shadow-sm relative" style="min-width: 0;">
         <!-- Status notification (top right) -->
@@ -112,11 +112,11 @@
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
             </svg>
-            <div class="text-sm text-zinc-700">Generating report…</div>
+            <div class="text-sm text-zinc-700">Generating player report…</div>
           </div>
         </div>
         <div id="out_html" class="space-y-3" style="max-width: 100%; overflow-x: hidden;">
-          <div class="text-sm text-zinc-500">No report yet.</div>
+          <div class="text-sm text-zinc-500">Generate a report to see results here.</div>
         </div>
 
         <pre id="out_md" class="hidden"></pre>
@@ -140,7 +140,7 @@
           <input id="report_q" type="text" placeholder="Search by player, position, team, league…"
             class="w-full rounded-md border bg-white border-zinc-300 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-[#6FD06B]" />
           <div class="text-xs text-zinc-500">
-            Try: Guard, Euroleague, etc.
+            Try: Guard, Euroleague
           </div>
         </div>
 
@@ -157,7 +157,7 @@
   <div id="credits_modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50">
     <div class="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6">
       <div class="flex items-start justify-between mb-4">
-        <h3 class="text-2xl font-bold">Top up credits</h3>
+        <h3 class="text-2xl font-bold">Buy credits</h3>
         <button type="button" id="close_credits_modal" class="text-zinc-400 hover:text-zinc-600">
           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
@@ -174,19 +174,19 @@
           </div>
         </div>
 
-        <div class="grid grid-cols-2 gap-2">
-          <button type="button" id="modal_buy5" class="col-span-1 btn-primary">
+        <div class="flex flex-col gap-2">
+          <button type="button" id="modal_buy5" class="btn-primary w-full">
             Buy 5 credits
           </button>
 
-          <button type="button" id="modal_buy10" class="col-span-1 btn-primary">
+          <button type="button" id="modal_buy10" class="btn-primary w-full">
             Buy 10 credits
           </button>
 
-          <div class="col-span-2 flex gap-2 items-center">
+          <div class="flex gap-2 items-center">
             <input id="modal_custom_credits" type="number" min="1" max="1000" value="5"
               class="flex-1 rounded-md border bg-white border-zinc-300 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-[#6FD06B]" />
-            <button type="button" id="modal_buyCustom" class="btn-primary">
+            <button type="button" id="modal_buyCustom" class="btn-primary whitespace-nowrap">
               Buy custom
             </button>
           </div>

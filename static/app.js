@@ -133,10 +133,21 @@ const sb = window.sb;
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || `Failed to load report (${res.status})`);
 
+        // Mark as cached since it's from library
+        data.cached = true;
+
         $("out_html").innerHTML = renderReport(data);
         window.enableTableDragScroll?.();
-        setText("badge", "");
+        setText("badge");
         setText("status", "");
+
+        // Track library report load
+        try {
+          window.trackClientEvent?.("library_report_loaded", {
+            player_name: data.player || data.player_name || "Unknown",
+            report_id: reportId
+          });
+        } catch (err) {}
 
         // Store regenerate target
         window._regenerateReportId = data.report_id || data.id || reportId;
@@ -814,7 +825,7 @@ const sb = window.sb;
               // Display the result
               $("out_html").innerHTML = renderReport(acceptResult);
               window.enableTableDragScroll?.();
-              setText("badge", acceptResult.cached ? "Report Loaded from Library" : "New Report Generated");
+              setText("badge");
               setText("status", "");
               
               // Update credits display
@@ -915,7 +926,7 @@ const sb = window.sb;
                   // Display the result (already includes HTML, credit info, etc.)
                   $("out_html").innerHTML = renderReport(acceptResult);
                   window.enableTableDragScroll?.();
-                  setText("badge", "Report Loaded from Library");
+                  setText("badge");
                   setText("status", "");
                   
                   // Update credits display
@@ -1039,36 +1050,27 @@ const sb = window.sb;
           });
         } catch (err) {}
 
+        // Track library report load specifically
+        try {
+          if (data.cached || data.from_suggestion || data.auto_matched) {
+            window.trackClientEvent?.("library_report_loaded", {
+              player_name: data.player || data.player_name || "Unknown",
+              report_id: data.report_id,
+              from_suggestion: data.from_suggestion || false,
+              auto_matched: data.auto_matched || false
+            });
+          }
+        } catch (err) {}
+
         // ✅ refresh sidebar list when report was newly added to user's library
         // Always refresh when not cached, or when it's a suggestion acceptance (adds to library)
         if (!data.cached || data.from_suggestion || data.refreshed) {
           window.loadReports?.();
         }
 
-        // User-friendly messaging based on the operation type:
-        let badgeText = "New Report Generated";
-        let statusText = "";
-        
-        if (data.refreshed) {
-          // User clicked Regenerate button
-          badgeText = "Report Updated";
-          statusText = "";
-        } else if (data.from_suggestion) {
-          // User accepted suggestion from another user
-          badgeText = "Report Loaded from Library";
-          statusText = "";
-        } else if (data.auto_matched) {
-          // System auto-matched from user's own library (typo correction, etc)
-          badgeText = "Report Loaded from Library";
-          statusText = "";
-        } else if (data.cached) {
-          // User loaded their own cached report (clicked from library or exact search)
-          badgeText = "Report Loaded from Library";
-          statusText = "";
-        }
-        
-        setText("badge", badgeText);
-        setText("status", statusText);
+        // Clear badge
+        setText("badge");
+        setText("status", "");
       } catch (e) {
         setText("err", e?.message || String(e));
         setText("status");
