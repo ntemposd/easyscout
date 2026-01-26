@@ -434,12 +434,7 @@
           }
         }
 
-        const badge = document.getElementById("badge");
         const status = document.getElementById("status");
-        if (badge) {
-          badge.textContent = "📚 Loaded from library";
-          badge.classList.remove("hidden");
-        }
         if (status) status.textContent = "";
       } catch (renderError) {
         if (err) err.textContent = "Failed to load report.";
