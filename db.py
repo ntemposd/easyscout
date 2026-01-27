@@ -38,8 +38,8 @@ def _get_pool() -> ConnectionPool:
         
         _pool = ConnectionPool(
             dsn,
-            min_size=1,
-            max_size=10,
+            min_size=2,
+            max_size=20,  # Increased from 10 to handle concurrent onboarding
             timeout=10,
             max_lifetime=180,
             max_idle=60,
@@ -204,6 +204,25 @@ def refund_credits(
 
         cur.execute(
             """
+            insert into public.credit_ledger(user_id, delta, reason, source_type, source_id)
+            values (%s, %s, %s, %s, %s)
+            on conflict (source_type, source_id) do nothing
+            returning 1
+            """,
+            (user_id, amount, reason, source_type, source_id),
+        )
+        inserted = cur.fetchone()
+
+        if not inserted:
+            conn.commit()
+            cur.execute(
+                "select balance from public.user_credits where user_id = %s", (user_id,)
+            )
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
+
+        cur.execute(
+            """
             update public.user_credits
                set balance = balance + %s,
                    updated_at = now()
@@ -212,26 +231,9 @@ def refund_credits(
             """,
             (amount, user_id),
         )
-        new_balance = int(cur.fetchone()[0])
-
-        try:
-            cur.execute(
-                """
-                insert into public.credit_ledger(user_id, delta, reason, source_type, source_id)
-                values (%s, %s, %s, %s, %s)
-                """,
-                (user_id, amount, reason, source_type, source_id),
-            )
-            conn.commit()
-            return new_balance
-        except UniqueViolation:
-            # already granted => rollback to undo the balance increment
-            conn.rollback()
-            cur.execute(
-                "select balance from public.user_credits where user_id = %s", (user_id,)
-            )
-            row2 = cur.fetchone()
-            return int(row2[0]) if row2 else 0
+        row2 = cur.fetchone()
+        conn.commit()
+        return int(row2[0]) if row2 else 0
 
 
 # ----------------------------
