@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from db import PROMPT_VERSION, get_cached_report
+from db import PROMPT_VERSION, init_db, make_query_key, find_report_by_query_key
 from utils.parse import (
     extract_display_md,
     extract_grades,
@@ -123,26 +123,31 @@ def get_or_generate_scout_report(
     season = (season or "").strip()
 
     if not refresh:
-        cached_row = get_cached_report(
-            player=player,
-            team=team,
-            league=league,
-            season=season,
-            use_web=use_web,
-        )
-        if cached_row:
-            report_md = cached_row.get("report_md") or ""
-            return _build_payload_from_report(
-                report_md=report_md,
-                player=cached_row.get("player") or player,
-                team=cached_row.get("team") or "",
-                league=cached_row.get("league") or "",
-                season=cached_row.get("season") or "",
-                model=cached_row.get("model") or "",
-                use_web=bool(cached_row.get("use_web")),
-                cached=True,
-                created_at=cached_row.get("created_at"),
-            )
+        # Build query key to look up cached report
+        query_obj = {
+            "player": player,
+            "team": team,
+            "league": league,
+            "season": season,
+            "use_web": use_web,
+        }
+        query_key = make_query_key(query_obj)
+        # Try to find cached report (requires user_id for library lookup)
+        if user_id:
+            cached_row = find_report_by_query_key(user_id, query_key)
+            if cached_row:
+                report_md = cached_row.get("report_md") or ""
+                return _build_payload_from_report(
+                    report_md=report_md,
+                    player=cached_row.get("player_name") or player,
+                    team=cached_row.get("team") or "",
+                    league=cached_row.get("league") or "",
+                    season=cached_row.get("season") or "",
+                    model=cached_row.get("model") or "",
+                    use_web=bool(cached_row.get("use_web")),
+                    cached=True,
+                    created_at=cached_row.get("created_at"),
+                )
 
     user_prompt = f"""
 Player: {player}

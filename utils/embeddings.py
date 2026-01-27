@@ -1,9 +1,11 @@
 import json
 import os
 import time
+import hashlib
 from datetime import datetime
 
 from utils.metrics import increment_metric
+import db
 
 try:
     from openai import OpenAI
@@ -33,7 +35,6 @@ except Exception:
 _LOCAL_MODEL_NAME = os.getenv("LOCAL_EMBED_MODEL", "all-MiniLM-L6-v2")
 _LOCAL_MODEL = None
 
-DB_PATH = os.getenv("DB_PATH", "scout_reports.db")
 EMBED_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 _EMBED_CACHE = {"ts": 0.0, "data": None}
 _EMBED_CACHE_TTL = float(os.getenv("EMBED_CACHE_TTL", "60"))
@@ -79,29 +80,16 @@ def embed_text(client, text: str, model: str | None = None) -> list[float]:
     return emb
 
 
-def store_embedding(conn, report_id: int, vector: list[float]):
-    cur = conn.execute(
-        "SELECT report_id FROM report_embeddings WHERE report_id = ?", (report_id,)
-    )
-    now = datetime.utcnow().isoformat()
-    j = json.dumps(vector)
-    if cur.fetchone():
-        conn.execute(
-            "UPDATE report_embeddings SET embedding_json = ?, created_at = ? WHERE report_id = ?",
-            (j, now, report_id),
-        )
-    else:
-        conn.execute(
-            "INSERT INTO report_embeddings (report_id, embedding_json, created_at) VALUES (?, ?, ?)",
-            (report_id, j, now),
-        )
+def store_embedding(report_id: int, vector: list[float]):
+    """Store embedding in PostgreSQL"""
     try:
+        db.save_report_embedding(report_id, vector)
         increment_metric("report_embedding_stores")
     except Exception:
         pass
 
 
-def load_all_embeddings(conn):
+def load_all_embeddings():
     now = time.time()
     try:
         if (
@@ -141,49 +129,24 @@ def load_all_embeddings(conn):
 
 
 def _query_hash(text: str) -> str:
-    import hashlib
-
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def load_query_embedding(conn, text: str):
-    """Return embedding vector for `text` from `query_embeddings` table or None."""
-    qh = _query_hash(text)
-    row = conn.execute(
-        "SELECT embedding_json FROM query_embeddings WHERE query_hash = ? LIMIT 1",
-        (qh,),
-    ).fetchone()
-    if not row:
-        return None
-    try:
-        # record a cache hit for query embeddings
+def load_query_embedding(text: str):
+    """Return embedding vector for `text` from PostgreSQL or None."""
+    emb = db.get_query_embedding(_query_hash(text))
+    if emb:
         try:
             increment_metric("query_embedding_cache_hits")
         except Exception:
             pass
-        return json.loads(row[0])
-    except Exception:
-        return None
+    return emb
 
 
-def store_query_embedding(conn, text: str, vector: list[float]):
-    qh = _query_hash(text)
-    now = datetime.utcnow().isoformat()
-    j = json.dumps(vector)
-    cur = conn.execute(
-        "SELECT query_hash FROM query_embeddings WHERE query_hash = ?", (qh,)
-    )
-    if cur.fetchone():
-        conn.execute(
-            "UPDATE query_embeddings SET query_text = ?, embedding_json = ?, created_at = ? WHERE query_hash = ?",
-            (text, j, now, qh),
-        )
-    else:
-        conn.execute(
-            "INSERT INTO query_embeddings (query_hash, query_text, embedding_json, created_at) VALUES (?, ?, ?, ?)",
-            (qh, text, j, now),
-        )
+def store_query_embedding(text: str, vector: list[float]):
+    """Store query embedding in PostgreSQL"""
     try:
+        db.save_query_embedding(_query_hash(text), text, vector)
         increment_metric("query_embedding_stores")
     except Exception:
         pass
@@ -208,10 +171,10 @@ def cosine(a, b):
     return float(np.dot(a, b) / denom)
 
 
-def find_nearest(conn, client, text: str, top_k: int = 3):
+def find_nearest(client, text: str, top_k: int = 3):
     """Compute embedding for `text` and return top_k (report_id, score) tuples sorted desc."""
     # Get or compute query embedding and cache it in DB to avoid re-encoding
-    emb = load_query_embedding(conn, text)
+    emb = load_query_embedding(text)
     if emb is None:
         try:
             increment_metric("embedding_calls")
@@ -219,11 +182,10 @@ def find_nearest(conn, client, text: str, top_k: int = 3):
             pass
         emb = embed_text(client, text)
         try:
-            store_query_embedding(conn, text, emb)
-            conn.commit()
+            store_query_embedding(text, emb)
         except Exception:
             pass
-    rows = load_all_embeddings(conn)
+    rows = load_all_embeddings()
     scored = []
     for rid, vec in rows:
         try:

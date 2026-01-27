@@ -11,18 +11,19 @@ AI-powered basketball scouting reports. Generate professional, coach-ready scout
 - **AI-Generated Reports** — Professional scouting reports powered by OpenAI
 - **Smart Caching** — Cached reports cost 0 credits (first request costs 1 credit)
 - **Personal Library** — User-isolated report storage with PostgreSQL
-- **Credit System** — Stripe-powered credit wallet with ledger-based accounting
+- **Credit System** — Credit-based usage with transaction ledger
 - **Secure Auth** — Supabase authentication with JWT tokens
+- **Dev Mode** — Local testing with credit grants (no payment setup required)
 
 ---
 
 ## Tech Stack
 
 - **Backend:** Flask (Python 3.10+)
-- **AI:** OpenAI API (GPT-4.5+)
-- **Database:** PostgreSQL (Supabase) + SQLite (local cache)
+- **AI:** OpenAI API (GPT-5.x)
+- **Database:** PostgreSQL 17+ (Supabase or self-hosted)
 - **Auth:** Supabase Auth
-- **Payments:** Stripe
+- **Payments:** Stripe (production only, not required for local dev)
 - **Frontend:** HTML, Tailwind CSS, Vanilla JS
 - **Hosting:** Render
 
@@ -34,18 +35,25 @@ AI-powered basketball scouting reports. Generate professional, coach-ready scout
 easyscout/
 ├── app.py                 # Flask application & API routes
 ├── auth.py                # Authentication helpers
-├── db.py                  # SQLite cache layer
-├── db_pg.py              # PostgreSQL data layer
+├── db.py                  # PostgreSQL data layer
+├── db_schema.sql          # Complete database schema
+├── run_server.py          # Development server entry point
 ├── requirements.txt       # Python dependencies
-├── .env.example          # Environment variables template
+├── .env.example           # Environment variables template
+├── tailwind.config.js     # Tailwind CSS configuration
+├── documents/             # Architecture & documentation
+├── migrations/
+│   ├── apply_migration.py # Migration helper
+│   └── ...                # Historical migrations
 ├── services/
-│   └── scout.py          # Scouting report generation
+│   └── scout.py           # Scouting report generation
 ├── utils/
-│   ├── prompts.py        # Prompt loading (supports Render secret files)
-│   ├── embeddings.py     # Name matching & fuzzy search
-│   └── ...               # Other utilities
-├── templates/            # Jinja2 HTML templates
-├── static/               # CSS, JS, assets
+│   ├── prompts.py         # Prompt loading
+│   ├── embeddings.py      # Name matching & fuzzy search
+│   ├── metrics.py         # Instrumentation
+│   └── ...                # Other utilities
+├── templates/             # Jinja2 HTML templates
+├── static/                # CSS, JS, assets
 └── prompts/
     └── scout_instructions.example.txt
 ```
@@ -57,10 +65,12 @@ easyscout/
 ### Prerequisites
 
 - Python 3.10+
-- PostgreSQL database (or Supabase)
+- PostgreSQL 17+ (local or Supabase)
 - OpenAI API key
-- Stripe account (for payments)
-- Supabase project (for auth)
+- Supabase project (for auth and user management)
+- Stripe account (optional, production only)
+
+**Note:** Email features (Mailjet SMTP) are not required for local development. Supabase auth works out of the box with your project credentials.
 
 ### Local Setup
 
@@ -96,63 +106,60 @@ easyscout/
 
 6. **Run the application**
    ```bash
-   python app.py
+   python run_server.py
    ```
    
    App runs at: http://127.0.0.1:5000
+
+### Database Schema
+
+Requires **PostgreSQL 17+**. Run the schema file to create all tables (reports, credits, cost tracking, embeddings, metrics):
+
+```bash
+# Using psql
+psql -h <host> -U <user> -d <db> -f db_schema.sql
+
+# Or with DATABASE_URL
+export DATABASE_URL="postgresql://user:pass@host:5432/dbname"  # PowerShell: $env:DATABASE_URL="..."
+python migrations/apply_migration.py ../db_schema.sql
+```
+
+**Note:** For local development, use `DEV_TOOLS=1` mode to grant yourself credits for testing without Stripe setup.
 
 ---
 
 ## Environment Variables
 
-See [.env.example](.env.example) for full list. Key variables:
+See [.env.example](.env.example) for full list.
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `SECRET_KEY` | Flask secret key (generate random string) | Yes |
-| `OPENAI_API_KEY` | OpenAI API key | Yes |
-| `OPENAI_MODEL` | Model name (e.g., `gpt-4.5`) | Yes |
-| `DATABASE_URL` | PostgreSQL connection string | Yes |
-| `SUPABASE_URL` | Supabase project URL | Yes |
-| `SUPABASE_ANON_KEY` | Supabase anonymous key | Yes |
-| `STRIPE_SECRET_KEY` | Stripe secret key | Yes |
-| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret | Yes |
-| `APP_BASE_URL` | Production URL (e.g., `https://easyscout.xyz`) | Yes |
-| `SENTRY_DSN` | Sentry error tracking DSN | No |
-| `DEV_TOOLS` | Set to `1` for development mode | No |
+### Required for Local Development
 
----
+| Variable | Description |
+|----------|-------------|
+| `OPENAI_API_KEY` | OpenAI API key from [platform.openai.com](https://platform.openai.com) |
+| `OPENAI_MODEL` | Model name (e.g., `gpt-5.2`) |
+| `DATABASE_URL` | PostgreSQL connection string |
+| `SUPABASE_URL` | Supabase project URL |
+| `SUPABASE_ANON_KEY` | Supabase anonymous key |
+| `APP_BASE_URL` | Local: `http://localhost:5000` |
+| `DEV_TOOLS` | Set to `1` for development mode |
 
-## Deployment (Render)
+### Optional for Local Development
 
-### 1. Push to GitHub
-```bash
-git add .
-git commit -m "Ready for production"
-git push origin main
-```
+| Variable | Description |
+|----------|-------------|
+| `ENABLE_OPENAI` | Enable OpenAI integration (1 or 0) |
+| `SENTRY_DSN` | Sentry error tracking DSN |
+| `SENTRY_ENV` | Sentry environment (e.g., `development`) |
+| `SENTRY_TRACES_SAMPLE_RATE` | Sentry traces sample rate (0-1) |
 
-### 2. Create Render Web Service
-- Connect your GitHub repository
-- Environment: Python 3
-- Build Command: `pip install -r requirements.txt`
-- Start Command: `gunicorn app:app` (add gunicorn to requirements.txt)
+### Production Only
 
-### 3. Configure Environment Variables
-Add all variables from `.env.example` to Render's environment settings.
-
-### 4. Upload Secret File (Prompt)
-- Go to **Environment** → **Secret Files**
-- Filename: `scout_instructions.txt`
-- Paste your prompt content
-- Add environment variable: `RENDER_SECRET_FILE_PATH=scout_instructions.txt`
-
-### 5. Configure Database
-Use Render's PostgreSQL addon or link your Supabase database URL.
-
-### 6. Set Custom Domain
-- Add your domain in Render settings
-- Update `APP_BASE_URL` environment variable
+| Variable | Description |
+|----------|-------------|
+| `STRIPE_SECRET_KEY` | Stripe secret key |
+| `STRIPE_PUBLISHABLE_KEY` | Stripe publishable key |
+| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret |
 
 ---
 
@@ -169,9 +176,6 @@ Use Render's PostgreSQL addon or link your Supabase database URL.
 - `GET /api/credits` — Get current credit balance
 - `POST /api/render_md` — Render markdown to HTML
 
-### Webhooks
-- `POST /webhooks/stripe` — Stripe payment webhooks
-
 ### Development Only
 - `POST /api/dev/grant_credits` — Grant credits (requires `DEV_TOOLS=1`)
 
@@ -179,12 +183,10 @@ Use Render's PostgreSQL addon or link your Supabase database URL.
 
 ## Development
 
-### Testing Stripe Locally
-```bash
-stripe listen --forward-to localhost:5000/webhooks/stripe
-```
-
 ### Grant Credits (Dev Mode)
+
+Instead of using Stripe, contributors can grant themselves credits for testing:
+
 ```javascript
 const token = (await window.sb.auth.getSession()).data.session.access_token;
 fetch('/api/dev/grant_credits', {
@@ -198,85 +200,11 @@ fetch('/api/dev/grant_credits', {
 ```
 
 ### Run with Debug Mode
+
 ```bash
 export DEV_TOOLS=1  # Windows: set DEV_TOOLS=1
-python app.py
+python run_server.py
 ```
-
----
-
-## Caching Logic
-
-Reports are deduplicated using a deterministic query key:
-
-```python
-query_key = json.dumps({
-    "player": normalized_player_name,
-    "team": team or "",
-    "league": league or ""
-}, sort_keys=True)
-```
-
-Database constraint on `(user_id, query_key)` ensures:
-- No duplicate reports per user
-- No double charging for same query
-- Safe retries on network failures
-
-**Cost:**
-- First generation: 1 credit
-- Cached retrieval: 0 credits
-- Force refresh: 1 credit
-
----
-
-## Security Features
-
-- **HTTPS Only** — Secure cookies with HSTS headers
-- **XSS Protection** — Content Security Policy headers
-- **CSRF Protection** — SameSite cookies
-- **SQL Injection Safe** — Parameterized queries only
-- **Secret Management** — Environment variables + Render secret files
-- **Error Tracking** — Sentry integration (optional)
-
----
-
-## Email (Mailjet SMTP)
-
-- Auth emails (magic links): configure Supabase to use Mailjet SMTP so Supabase sends links from your domain.
-- App emails (notifications): use [utils/email.py](utils/email.py) to send transactional messages via Mailjet SMTP.
-
-### Configure Supabase SMTP to use Mailjet
-- Verify your domain/sender in Mailjet (add the DKIM CNAMEs and SPF `v=spf1 include:spf.mailjet.com ~all`).
-- Create/gather Mailjet SMTP creds (Mailjet API key = username, secret key = password).
-- In Supabase → Project Settings → Authentication → Email → SMTP Settings:
-   - Host: `in-v3.mailjet.com`
-   - Port: `587` (TLS) or `465` (SSL)
-   - Username: Mailjet API key
-   - Password: Mailjet secret key
-   - Sender: a verified address, e.g., `no-reply@yourdomain.com`
-- Set the magic link redirect to `/auth/callback` on your domain.
-
-### Configure server-side Mailjet
-Set these environment variables (see [.env.example](.env.example)):
-- `MAILJET_API_KEY`
-- `MAILJET_SECRET_KEY`
-- `MAILJET_SENDER_EMAIL`
-- Optional override: `MAILJET_SMTP_HOST` (default `in-v3.mailjet.com`), `MAILJET_SMTP_PORT` (default `587`).
-
-Dev-only test endpoint (requires `DEV_TOOLS=1`):
-
-```bash
-curl -X POST http://localhost:5000/api/dev/send_email \
-   -H "Authorization: Bearer <token>" \
-   -H "Content-Type: application/json" \
-   -d '{
-      "to": "you@recipient.com",
-      "subject": "Mailjet Test",
-      "text": "Hello from Easyscout via Mailjet!"
-   }'
-```
-
-This uses `send_email()` from [utils/email.py](utils/email.py).
 
 ---
 
@@ -288,11 +216,35 @@ MIT License - feel free to use for your own projects.
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+Contributions are welcome! Here's how to get started:
+
+### Setup
+1. Follow the [Getting Started](#getting-started) section above
+2. Create a feature branch: `git checkout -b feature/your-feature`
+3. Make your changes and test locally with `DEV_TOOLS=1`
+
+### Testing Your Changes
+- Test the scouting flow end-to-end
+- Use `DEV_TOOLS=1` to grant credits for testing
+- Check the browser console and server logs for errors
+
+### Areas to Contribute
+- **Frontend:** Improve UI/UX (templates, static/)
+- **Backend:** Add new API features or optimize existing ones (app.py, services/)
+- **Database:** Improve schema or add new tables (db.py, db_schema.sql)
+- **Utilities:** Add new helper functions or improve existing ones (utils/)
+- **Docs:** Improve documentation and examples
+
+### Submitting Changes
+1. Commit with clear messages: `git commit -m 'Add feature: description'`
+2. Push to your branch: `git push origin feature/your-feature`
+3. Open a Pull Request with a description of your changes
+
+### Code Style
+- Use clear, descriptive variable names
+- Follow PEP 8 for Python
+- Add comments for complex logic
+- Keep functions focused and testable
 
 ---
 
