@@ -272,8 +272,14 @@ def _find_by_embedding_similarity(
         
         # Check league/team constraints
         try:
-            from db_pg import get_report
-            payload = get_report(user_id, int(best_rid))
+            # If user_id is "*", fetch from any user (global search)
+            if user_id == "*":
+                from db import get_report_by_id
+                payload = get_report_by_id(int(best_rid))
+            else:
+                from db import get_report
+                payload = get_report(user_id, int(best_rid))
+            
             if not payload:
                 return None
             
@@ -284,7 +290,12 @@ def _find_by_embedding_similarity(
                 # Try next best
                 if len(tops) > 1:
                     best_rid, best_sim = tops[1]
-                    payload = get_report(user_id, int(best_rid))
+                    if user_id == "*":
+                        from db import get_report_by_id
+                        payload = get_report_by_id(int(best_rid))
+                    else:
+                        from db import get_report
+                        payload = get_report(user_id, int(best_rid))
                     if not payload:
                         return None
                     cand_league = (payload.get("league") or "").strip().lower()
@@ -351,7 +362,7 @@ def _find_by_embedding_similarity(
             payload["report_id"] = int(best_rid)
             payload["matched_player_name"] = payload.get("player")
             payload["matched_score"] = int(best_sim * 100)
-            from db_pg import get_balance
+            from db import get_balance
             payload["credits_remaining"] = get_balance(user_id)
             return {"type": "auto", "payload": payload, "score": int(best_sim * 100)}
         
@@ -399,7 +410,7 @@ def _best_similar_report(
     # Search Postgres FIRST (where current reports live)
     # Do NOT fallback to SQLite — that's old/stale data and may include other users' reports
     try:
-        from db_pg import list_reports
+        from db import list_reports
         candidates = list_reports(user_id, q="", limit=max_scan)
     except Exception:
         candidates = []
@@ -453,7 +464,7 @@ def _best_similar_report(
                     return True
             except Exception:
                 pass
-            # Fuzzy match for typos: allow if similarity >= 90% and length difference <= 2
+            # Fuzzy match for typos: allow if similarity >= 85% and length difference <= 2
             try:
                 if _HAS_RAPIDFUZZ and _token_set_ratio is not None:
                     sim = int(_token_set_ratio(a_last.lower(), b_last.lower()) or 0)
@@ -461,7 +472,7 @@ def _best_similar_report(
                     sim = int(SequenceMatcher(None, a_last.lower(), b_last.lower()).ratio() * 100)
                 
                 len_diff = abs(len(a_last) - len(b_last))
-                if sim >= 90 and len_diff <= 2:
+                if sim >= 85 and len_diff <= 2:
                     return True
             except Exception:
                 pass
@@ -598,7 +609,7 @@ def _best_similar_report(
         def _handle_top(best_rid, best_sim):
             if best_sim >= float(os.getenv("EMBED_AUTO_THRESHOLD", "0.86")):
                 try:
-                    from db_pg import get_report
+                    from db import get_report
 
                     payload = get_report(user_id, int(best_rid))
                     if payload:
@@ -662,7 +673,7 @@ def _best_similar_report(
                         payload["report_id"] = int(best_rid)
                         payload["matched_player_name"] = payload.get("player")
                         payload["matched_score"] = int(best_sim * 100)
-                        from db_pg import get_balance
+                        from db import get_balance
                         payload["credits_remaining"] = get_balance(user_id)
 
                         return {
@@ -674,7 +685,7 @@ def _best_similar_report(
                     return None
             if best_sim >= float(os.getenv("EMBED_SUGGEST_THRESHOLD", "0.78")):
                 try:
-                        from db_pg import get_report
+                        from db import get_report
                         # Always check first-name similarity for embedding suggestions
                         # to avoid surname-only false matches (e.g., Okaro → Derrick).
                         try:
@@ -930,7 +941,7 @@ def _best_similar_report(
 
     if best_score >= int(auto_threshold):
         try:
-            from db_pg import get_report, get_balance
+            from db import get_report, get_balance
 
             payload = get_report(user_id, int(best["meta"].get("id")))
             if payload:

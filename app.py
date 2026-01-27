@@ -38,16 +38,14 @@ try:
 except ImportError:
     ExcepthookIntegration = FlaskIntegration = LoggingIntegration = None
 
-import db_pg
-from auth import require_user_id
-from db import init_db  # your existing SQLite cache init
-from db import find_canonical_by_alias, get_cached_report
 import db
-from db_pg import (
+from auth import require_user_id
+from db import (
     find_report_by_query_key,
     get_balance,
     get_report,
     get_report_by_id,
+    init_db,
     insert_report,
     list_reports,
     count_reports,
@@ -65,7 +63,6 @@ from utils.parse import extract_display_md
 from utils.prompts import load_text_prompt
 from utils.render import md_to_safe_html, ensure_parsed_payload
 from utils.normalize import normalize_name
-from utils.name_variants import NICKNAME_MAP
 
 from utils.app_helpers import (
     _best_similar_report,
@@ -1088,7 +1085,7 @@ def api_alias():
         # Import DB helpers locally to avoid circular import concerns
         from datetime import datetime, timezone
 
-        from db import PROMPT_VERSION, _upsert_player_alias, connect, norm
+        from db import PROMPT_VERSION, norm, _get_pool
         from utils.phonetic import phonetic_key
 
         p_norm = norm(player)
@@ -1125,25 +1122,24 @@ def api_alias():
             # If any of the checks fail, continue with the upsert as before
             pass
 
-        with connect() as conn:
-            # upsert alias
-            _upsert_player_alias(conn, p_norm, queried, q_norm)
-
-            # Also update the canonical reports row's queried_player to reflect
-            # the most-recent accepted query so the UI shows the latest example.
-            # Update the newest report for that player_norm and prompt_version.
-            conn.execute(
-                """
-                UPDATE reports SET queried_player = ?, queried_player_norm = ?, created_at = ?
-                WHERE id = (
-                    SELECT id FROM reports WHERE player_norm = ? AND prompt_version = ? ORDER BY created_at DESC LIMIT 1
-                )
-                """,
-                (queried, q_norm, now, p_norm, PROMPT_VERSION),
-            )
+        # Use PostgreSQL for alias storage
+        # (Temporarily disabled—player dedup now handled via names_match)
+        # pool = _get_pool()
+        # with pool.connection() as conn, conn.cursor() as cur:
+        #     cur.execute(
+        #         """
+        #         INSERT INTO public.player_aliases (player_norm, alias, alias_norm)
+        #         VALUES (%s, %s, %s)
+        #         ON CONFLICT (player_norm, alias_norm) DO UPDATE
+        #         SET alias = EXCLUDED.alias
+        #         """,
+        #         (p_norm, queried, q_norm),
+        #     )
+        #     conn.commit()
 
         return jsonify({"ok": True})
     except Exception as e:
+        logger.exception(f"Error in /api/alias: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -1461,6 +1457,10 @@ def scout():
 
     use_web = bool(data.get("use_web", False))
     refresh = bool(data.get("refresh", False))
+
+    logger.info(
+        f"[FLOW] /api/scout start player='{player}' team='{team}' league='{league}' refresh={refresh}"
+    )
     report_id_to_update = data.get("report_id")  # For regenerating existing reports
     accept_suggestion = bool(data.get("accept_suggestion", False))  # For accepting suggestions
     suggestion_report_id = data.get("suggestion_report_id")  # Source report ID when accepting
@@ -1517,6 +1517,33 @@ def scout():
             logger.error(f"[ACCEPT_SUGGESTION] Source report not found anywhere")
             return jsonify({"error": f"Source report not found"}), 404
         
+        # If the suggestion points to a report owned by the same user,
+        # do NOT charge — just return the existing report for FREE.
+        try:
+            source_owner = source_report.get("source_user_id")
+        except Exception:
+            source_owner = None
+        if source_owner and str(source_owner) == str(user_id):
+            logger.info(
+                f"[ACCEPT_SUGGESTION] Same-user source (user_id={user_id}, report_id={suggestion_report_id}) → returning FREE"
+            )
+            existing_payload = dict(source_report)
+            try:
+                payload = ensure_parsed_payload(existing_payload)
+            except Exception:
+                payload = existing_payload
+            payload["cached"] = True
+            payload["report_id"] = suggestion_report_id
+            payload["library_id"] = suggestion_report_id
+            payload["credits_remaining"] = get_balance(user_id)
+            # Ensure HTML is present
+            try:
+                display_md = extract_display_md(payload.get("report_md", "") or "")
+                payload["report_html"] = md_to_safe_html(display_md)
+            except Exception:
+                payload.setdefault("report_html", "")
+            return jsonify(payload)
+        
         # Check if user already has a report with the SOURCE report's canonical name
         # (not the user's typed query, which might have typos)
         # Use the source report's player name since fuzzy matching already determined they're the same player
@@ -1524,13 +1551,9 @@ def scout():
         source_player_name = source_report.get("player", "")
         
         def _canonical_query_name(name: str) -> str:
+            # Canonicalize using normalization only; nickname/typo handling happens in fuzzy/embedding layers.
             norm = normalize_name(name, transliterate=True)
-            parts = norm.split()
-            if not parts:
-                return norm
-            first = parts[0]
-            first_canon = NICKNAME_MAP.get(first, first)
-            parts[0] = first_canon
+            parts = [p for p in norm.split() if p]
             return " ".join(parts)
 
         # Use SOURCE report's player name (the correct one without typos)
@@ -1657,16 +1680,13 @@ def scout():
 
     # Canonicalize player for deduplication (nickname → formal)
     def _canonical_query_name(name: str) -> str:
+        # Canonicalize using normalization only; nickname/typo handling happens in fuzzy/embedding layers.
         norm = normalize_name(name, transliterate=True)
-        parts = norm.split()
-        if not parts:
-            return norm
-        first = parts[0]
-        first_canon = NICKNAME_MAP.get(first, first)
-        parts[0] = first_canon
+        parts = [p for p in norm.split() if p]
         return " ".join(parts)
 
     canonical_query_player = _canonical_query_name(player)
+    logger.info(f"[FLOW] Canonical player='{canonical_query_player}'")
 
     # This defines "same report" for the user's library.
     # (Keep refresh inside if you want refresh=true to be a different saved report;
@@ -1681,9 +1701,57 @@ def scout():
     query_key = make_query_key(query_obj)
 
     # ✅ FREE if already in the user's library (don't charge a credit)
-    # If the exact same query_key exists for this user, return it immediately.
-    # But skip if this is an explicit regeneration (report_id provided + refresh=true)
-    existing = find_report_by_query_key(user_id, query_key)
+    logger.info("[FLOW] Player-name check start")
+    # FIRST: Check if user already has ANY report for this canonical player name
+    # (This prevents duplicate reports when user searches "Kostas" then "Konstantinos" or typos)
+    player_only_check = None
+    try:
+        from db import _get_pool
+        from utils.name_matching import names_match
+        
+        with _get_pool().connection() as conn, conn.cursor() as cur:
+            # Get all user's reports and check for name match
+            cur.execute(
+                """
+                SELECT id, payload, report_md, player_name, created_at, cached, query
+                FROM public.reports
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                LIMIT 50
+                """,
+                (user_id,),
+            )
+            rows = cur.fetchall()
+            
+            # Check each report's canonical player name against current search
+            for row in rows:
+                rid, payload, report_md, player_name, created_at, cached, query_json = row
+                try:
+                    # Extract canonical player from query field
+                    import json
+                    query_dict = json.loads(query_json) if isinstance(query_json, str) else query_json
+                    existing_canonical = query_dict.get("player", "").strip()
+                    
+                    # Use names_match for fuzzy comparison (handles typos, nicknames, etc.)
+                    if existing_canonical and names_match(canonical_query_player, existing_canonical):
+                        player_only_check = {
+                            "id": int(rid),
+                            "payload": payload,
+                            "report_md": report_md or "",
+                            "player_name": player_name or "",
+                            "created_at": created_at.isoformat() if created_at else None,
+                            "cached": bool(cached),
+                        }
+                        logger.info(f"[PLAYER CHECK] Found existing report for '{canonical_query_player}' → matched '{existing_canonical}' (id={rid})")
+                        break
+                except Exception:
+                    continue
+    except Exception as e:
+        logger.warning(f"[PLAYER CHECK] Lookup failed: {e}")
+    
+    # Use player_only_check if found, otherwise fall back to exact query_key match
+    existing = player_only_check if player_only_check else find_report_by_query_key(user_id, query_key)
+    logger.info(f"[FLOW] Player-name check: {'HIT' if player_only_check else 'MISS'}")
     logger.info(f"[MATCH] Query key lookup: {'HIT' if existing else 'MISS'}")
     if existing and not (report_id_to_update and refresh):
         owned_payload = existing.get("payload") or {}
@@ -1775,7 +1843,7 @@ def scout():
     if not refresh:
         try:
             # Check if player exists in cache (by name or alias)
-            alias = find_canonical_by_alias(player)
+            alias = db.find_canonical_by_alias(player)
             logger.info(f"[MATCH] Alias lookup: {'HIT → ' + alias.get('player_norm') if alias and alias.get('player_norm') else 'MISS'}")
             if alias and alias.get("player_norm"):
                 canonical_name = alias.get("player_norm")
@@ -1784,17 +1852,11 @@ def scout():
                 except Exception:
                     pass
             else:
-                # Check if exact player exists in cache
-                local = get_cached_report(
-                    player, team=team, league=league, season=season, use_web=False
-                )
-                if local:
-                    canonical_name = local.get("player") or player
-                else:
-                    canonical_name = None
+                canonical_name = None
             
-            # If found in cache, fetch from Postgres using the canonical name
-            if canonical_name:
+            # Check Postgres for existing report using player name
+            if not canonical_name:
+                # Try direct Postgres lookup for the queried player
                 try:
                     # Build query key for Postgres lookup
                     cache_query_obj = {
@@ -1844,10 +1906,12 @@ def scout():
 
     # If user did not request a forced refresh, try similarity matching
     # Priority: Embeddings (fast, semantic) → Fuzzy (token-based) → LLM
+    logger.info("[FLOW] Similarity matching start (embeddings → fuzzy → global cache)")
     if not refresh:
         try:
             # STEP 1: Try embedding-based similarity (fast, semantic)
             # Embeddings run FIRST because they're fast and catch semantic equivalents
+            logger.info("[FLOW] Embedding match stage")
             try:
                 if league and league.strip():
                     embed_auto, embed_suggest = 0.95, 0.75
@@ -1855,7 +1919,7 @@ def scout():
                     embed_auto, embed_suggest = 0.95, 0.78
                 
                 embed_similar = _find_by_embedding_similarity(
-                    user_id,
+                    "*",  # Search ALL users' reports (global cross-user matching)
                     player,
                     team=team,
                     league=league,
@@ -1890,7 +1954,7 @@ def scout():
                         suggestion_report_id = embed_similar.get("report_id")
                         suggestion_payload = None
                         try:
-                            from db_pg import get_report
+                            from db import get_report
                             suggestion_payload = get_report(user_id, int(suggestion_report_id))
                         except Exception:
                             suggestion_payload = None
@@ -1920,7 +1984,7 @@ def scout():
                 pre_auto, pre_suggest = 88, 75
 
             pre_similar = _best_similar_report(
-                user_id,
+                "*",  # Search ALL users' reports (global cross-user matching)
                 player,
                 team=team,
                 league=league,
@@ -2026,27 +2090,15 @@ def scout():
                                     sp_season = suggestion_payload.get("season") or ""
                                     sp_use_web = bool(suggestion_payload.get("use_web"))
                                     sp_model = suggestion_payload.get("model") or ""
-                                    if sp_player and sp_report_md:
-                                        try:
-                                            new_id = db.save_report(
-                                                sp_player,
-                                                sp_report_md,
-                                                team=sp_team,
-                                                league=sp_league,
-                                                season=sp_season,
-                                                use_web=sp_use_web,
-                                                model=sp_model,
-                                                queried_player=player,
-                                            )
-                                            suggestion_payload["report_id"] = new_id
-                                        except Exception:
-                                            pass
+                                    # Note: No longer saving to SQLite - all reports now in PostgreSQL
+                                    if sp_player:
+                                        suggestion_payload["report_id"] = pre_similar.get("id")
                                 except Exception:
                                     pass
                             else:
                                 # Try a direct Postgres read that doesn't rely on psycopg get_report wrapper.
                                 try:
-                                    pool = db_pg._get_pool()
+                                    pool = db._get_pool()
                                     with pool.connection() as conn_pg, conn_pg.cursor() as cur:
                                         cur.execute(
                                             "SELECT payload, report_md, player_name, created_at, cached FROM public.reports WHERE id = %s LIMIT 1",
@@ -2106,21 +2158,9 @@ def scout():
                                             suggestion_payload.get("use_web")
                                         )
                                         sp_model = suggestion_payload.get("model") or ""
-                                        if sp_player and sp_report_md:
-                                            try:
-                                                new_id = db.save_report(
-                                                    sp_player,
-                                                    sp_report_md,
-                                                    team=sp_team,
-                                                    league=sp_league,
-                                                    season=sp_season,
-                                                    use_web=sp_use_web,
-                                                    model=sp_model,
-                                                    queried_player=player,
-                                                )
-                                                suggestion_payload["report_id"] = new_id
-                                            except Exception:
-                                                pass
+                                        # Note: No longer saving to SQLite - all reports in PostgreSQL
+                                        if sp_player:
+                                            suggestion_payload["report_id"] = pre_similar.get("id")
                                     except Exception:
                                         pass
                                 except Exception:
@@ -2144,13 +2184,14 @@ def scout():
                     )
 
             # Fallback to the previous (slightly stricter) check for suggestions
+            logger.info("[FLOW] Fuzzy match stage")
             if league and league.strip():
                 sim_auto, sim_suggest = 84, 74
             else:
                 sim_auto, sim_suggest = 88, 75
 
             similar = _best_similar_report(
-                user_id,
+                "*",  # Search ALL users' reports (global cross-user matching)
                 player,
                 team=team,
                 league=league,
@@ -2225,7 +2266,7 @@ def scout():
                             else:
                                 # Try a direct Postgres read that doesn't rely on psycopg get_report wrapper.
                                 try:
-                                    pool = db_pg._get_pool()
+                                    pool = db._get_pool()
                                     with pool.connection() as conn_pg, conn_pg.cursor() as cur:
                                         cur.execute(
                                             "SELECT payload, report_md, player_name, created_at, cached FROM public.reports WHERE id = %s LIMIT 1",
@@ -2304,6 +2345,140 @@ def scout():
     # Server-side override: always use web search when generating a new report
     generation_use_web = True
 
+    logger.info(f"[DEBUG] About to run global cache check for player='{player}'")
+    
+    # **GLOBAL CACHE CHECK**: Before generating, check if ANY user has this report
+    # (not just the current user's personal cache)
+    # NOTE: Use the same query_key that was computed earlier (with _canonical_query_name)
+    logger.info("[FLOW] Global cache stage")
+    global_cached_report = None
+    try:
+        pool = db._get_pool()
+        with pool.connection() as conn, conn.cursor() as cur:
+            logger.info(f"[GLOBAL CACHE] Searching for query_key: {query_key}")
+            # Search for ANY user's report with matching query_key (not user-scoped)
+            cur.execute(
+                """
+                SELECT id, payload, report_md, player_name, created_at, cached
+                FROM public.reports
+                WHERE query_key = %s
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (query_key,),
+            )
+            row = cur.fetchone()
+            if row:
+                rid, payload, report_md, player_name, created_at, cached = row
+                global_cached_report = {
+                    "id": int(rid),
+                    "payload": payload,  
+                    "report_md": report_md or "",
+                    "player_name": player_name or "",
+                    "created_at": created_at.isoformat() if created_at else None,
+                    "cached": bool(cached),
+                }
+                logger.info(f"[GLOBAL CACHE] Found report for query: {player_name}")
+            # Fallback: global fuzzy name match (avoid LLM when another user's report exists)
+            if not global_cached_report:
+                try:
+                    from utils.name_matching import names_match
+                except Exception:
+                    names_match = None
+                if names_match:
+                    try:
+                        cur.execute(
+                            """
+                            SELECT id, payload, report_md, player_name, created_at, cached
+                            FROM public.reports
+                            ORDER BY created_at DESC, id DESC
+                            LIMIT 100
+                            """
+                        )
+                        rows = cur.fetchall() or []
+                    except Exception:
+                        rows = []
+                    player_norm = normalize_name(player, transliterate=True)
+                    # Prefer exact league/team if provided
+                    for rid, payload, report_md, player_name, created_at, cached in rows:
+                        try:
+                            if names_match(player_norm, player_name or ""):
+                                global_cached_report = {
+                                    "id": int(rid),
+                                    "payload": payload,
+                                    "report_md": (report_md or ""),
+                                    "player_name": (player_name or ""),
+                                    "created_at": created_at.isoformat() if created_at else None,
+                                    "cached": bool(cached),
+                                }
+                                logger.info(f"[GLOBAL CACHE] Fuzzy global match found: {player_name} (id={rid})")
+                                break
+                        except Exception:
+                            continue
+    except Exception as e:
+        logger.warning(f"[GLOBAL CACHE] Lookup failed: {e}")
+
+    # If global cache hit, charge 1 credit and save copy to current user's library
+    if global_cached_report:
+        logger.info(f"[GLOBAL CACHE HIT] Reusing global report for '{player}' → charging 1 credit")
+        try:
+            new_balance = spend_credits(
+                user_id,
+                1,
+                reason="scout_global_cache",
+                source_type="scout_request",
+                source_id=f"global_cache_{global_cached_report['id']}",
+            )
+        except ValueError as e:
+            if "INSUFFICIENT_CREDITS" in str(e):
+                return jsonify({"error": "Insufficient credits. Please top up.", "credits": get_balance(user_id)}), 402
+            raise
+        
+        # Save copy to current user's library
+        try:
+            source_md = global_cached_report.get("report_md", "")
+            source_payload = global_cached_report.get("payload") or {}
+            payload = dict(source_payload)
+            payload["cached"] = True  # Marked as cached globally
+            payload["report_md"] = source_md
+            payload["player"] = global_cached_report.get("player_name")
+            
+            # Ensure structured fields
+            try:
+                payload = ensure_parsed_payload(payload)
+            except Exception:
+                pass
+            
+            # Save to user's library
+            user_report_id = insert_report(
+                user_id=user_id,
+                player_name=global_cached_report.get("player_name"),
+                query_obj=query_obj,
+                report_md=source_md,
+                payload=payload,
+                cached=True,
+            )
+            logger.info(f"[GLOBAL CACHE] Saved copy to user library: id={user_report_id}")
+            payload["report_id"] = user_report_id
+            payload["cached"] = True
+            payload["credits_remaining"] = new_balance
+            
+            # Track event
+            try:
+                track_event(user_id, "report_gen_cached", {
+                    "player": player,
+                    "source_report_id": global_cached_report["id"],
+                    "cached": True,
+                })
+            except Exception:
+                pass
+            
+            return jsonify(payload)
+        except Exception as e:
+            logger.exception(f"[GLOBAL CACHE] Failed to save copy: {e}")
+            # Fall through to normal generation
+            pass
+
     # Track generation start
     try:
         track_event(user_id, "report_gen_started", {
@@ -2326,6 +2501,7 @@ def scout():
         )
 
     try:
+        logger.info("[FLOW] LLM generation stage (calling OpenAI)")
         payload = get_or_generate_scout_report(
             client=client,
             model=MODEL,
@@ -2398,7 +2574,7 @@ def scout():
                     fb_team = None
                     fb_league = None
                     try:
-                        from db_pg import get_report
+                        from db import get_report
                         fb_payload = get_report(user_id, int(fb.get("report_id")))
                         if fb_payload:
                             fb_team = fb_payload.get("team")
@@ -2469,33 +2645,59 @@ def scout():
         # Ensure the stored payload includes the original queried name
         payload.setdefault("queried_player", player)
 
-        # Save into local SQLite and return its id as report_id (local cache)
+        # **POST-LLM CANONICAL DEDUP**: After LLM identifies the canonical player,
+        # check if the CURRENT USER already has a report with this exact canonical name.
+        # If yes, return that report instead of creating a duplicate.
+        logger.info(f"[POST-LLM DEDUP] Checking if user already has report for canonical_player='{canonical_player}'")
         try:
-            saved_id = db.save_report(
-                player=canonical_query_player,
-                queried_player=player,
-                team=team,
-                league=league,
-                season=season,
-                use_web=generation_use_web,
-                model=payload.get("model", MODEL),
-                report_md=report_md,
-            )
-        except Exception as e:
-            # On local persist failure, refund credit and error
-            try:
-                refund_credits(
-                    user_id,
-                    1,
-                    reason="refund_sqlite_persist_failed",
-                    source_type="scout_request_refund",
-                    source_id=f"{request_id}:refund",
+            pool = db._get_pool()
+            with pool.connection() as conn, conn.cursor() as cur:
+                # Search user's reports for matching canonical player name
+                cur.execute(
+                    """
+                    SELECT id, payload, report_md, player_name, created_at, cached
+                    FROM public.reports
+                    WHERE user_id = %s AND player_name = %s
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (user_id, canonical_player),
                 )
-            except Exception:
-                pass
-            return jsonify({"error": f"Failed to save local cache: {e}"}), 500
+                existing_row = cur.fetchone()
+                if existing_row:
+                    existing_id, existing_payload, existing_report_md, existing_player_name, existing_created_at, existing_cached = existing_row
+                    logger.info(f"[POST-LLM DEDUP] User already has report for '{canonical_player}' (id={existing_id}) → returning existing report, refunding 1 credit")
+                    
+                    # Refund the credit we just charged since we're reusing existing report
+                    try:
+                        refund_credits(
+                            user_id,
+                            1,
+                            reason="post_llm_dedup",
+                            source_type="scout_request_refund",
+                            source_id=f"{request_id}:post_llm_dedup",
+                        )
+                    except Exception as e:
+                        logger.warning(f"[POST-LLM DEDUP] Failed to refund credit: {e}")
+                    
+                    # Return the existing report
+                    existing_payload_dict = existing_payload or {}
+                    existing_payload_dict["report_md"] = existing_report_md or ""
+                    try:
+                        existing_payload_dict = ensure_parsed_payload(existing_payload_dict)
+                    except Exception:
+                        pass
+                    existing_payload_dict["cached"] = bool(existing_cached)
+                    existing_payload_dict["report_id"] = int(existing_id)
+                    existing_payload_dict["library_id"] = int(existing_id)
+                    existing_payload_dict["credits_remaining"] = get_balance(user_id)
+                    return jsonify(existing_payload_dict)
+        except Exception as e:
+            logger.warning(f"[POST-LLM DEDUP] Lookup failed: {e}")
 
-        payload["report_id"] = int(saved_id) if saved_id is not None else None
+        # Note: Removed local SQLite save - all reports now saved to PostgreSQL only
+        saved_id = None
+        
         # Always write to Postgres as the single source of truth for reports
         try:
             # If regenerating an existing report, update it by ID instead of creating new
@@ -2538,37 +2740,26 @@ def scout():
         # Generate and store embeddings for future similarity matching
         try:
             from utils.embeddings import embed_text, store_embedding
-            from db import connect
             
             # Create embedding for the player name
             embed_text_input = f"{canonical_player} {team or ''} {league or ''}".strip()
             embedding_vector = embed_text(client, embed_text_input)
             
-            # Store embedding in local SQLite cache
-            conn = None
+            # Store embedding in PostgreSQL
             try:
-                conn = connect()
                 # Use Postgres ID for embeddings so suggestions resolve correctly
                 target_id = int(pg_id)
-                store_embedding(conn, target_id, embedding_vector)
-                conn.commit()
+                store_embedding(target_id, embedding_vector)
                 logger.info(f"[EMBEDDING] Stored embedding for report_id={target_id}")
             except Exception as e:
                 logger.warning(f"Failed to store embedding for report {target_id}: {e}")
-            finally:
-                # Ensure connection is always closed
-                if conn:
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
         except Exception as e:
             # Embedding storage failure should not block report save
             logger.warning(f"Failed to generate/store embedding: {e}")
 
         # Track cost for this report generation
         try:
-            from db_pg import insert_cost_tracking
+            from db import insert_cost_tracking
             from utils.app_helpers import estimate_cost, get_model_prices
             
             usage = payload.get("usage", {})
