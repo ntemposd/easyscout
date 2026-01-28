@@ -6,4 +6,3 @@ This example file is committed to git for reference only.
 The actual scout_instructions.txt should be:
 - Kept locally for development
 - Uploaded to your server as a Secret File for production
-- Be publicly available if you feel like sharing it

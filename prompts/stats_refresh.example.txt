@@ -1,0 +1,8 @@
+This is an example prompt file, in the futute this prompt should be replaced by API calls to major sports APIs.
+
+Replace this with your actual stats refresh prompt.
+
+This example file is committed to git for reference only.
+The actual stats_refresh.txt should be:
+- Kept locally for development
+- Uploaded to your server as a Secret File for production
