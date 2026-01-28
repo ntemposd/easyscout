@@ -2319,6 +2319,7 @@ def scout():
                         
                         # Save copy to current user's library (if not already saved)
                         user_report_id = None
+                        user_report_id = None
                         try:
                             # Check if user already has this report (by query_key)
                             existing_copy = find_report_by_query_key(user_id, query_key)
@@ -2369,6 +2370,8 @@ def scout():
                         suggestion_payload["credits_remaining"] = new_balance
                         if user_report_id:
                             suggestion_payload["report_id"] = user_report_id
+                            payload["credits_remaining"] = new_balance
+                            payload["auto_matched"] = True
                             return jsonify(payload)
                         return jsonify(suggestion_payload)
                 elif pre_similar.get("type") == "suggest":

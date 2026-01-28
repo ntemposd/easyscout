@@ -122,11 +122,8 @@
           return;
         }
 
-        // Success: instant redirect (no countdown)
-        msg.textContent = "Email sent! Check your mailbox. Redirecting to homepage...";
-        setTimeout(() => {
-          window.location.replace('/');
-        }, 600);
+        // Success: show message, no redirect
+        msg.textContent = "Email sent! Check your mailbox for the sign-in link.";
       } catch (err) {
         msg.textContent = "Error: " + (err?.message || String(err));
       }
