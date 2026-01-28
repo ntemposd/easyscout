@@ -6,8 +6,9 @@ load_dotenv(override=True)
 
 import logging
 import os
+import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 try:
     import sentry_sdk
@@ -63,6 +64,7 @@ from utils.parse import extract_display_md
 from utils.prompts import load_text_prompt
 from utils.render import md_to_safe_html, ensure_parsed_payload
 from utils.normalize import normalize_name
+from utils.stats_refresh import replace_stats_sections
 
 from utils.app_helpers import (
     _best_similar_report,
@@ -1455,8 +1457,10 @@ def scout():
     league = (data.get("league") or "").strip()
     season = (data.get("season") or "").strip()
 
-    use_web = bool(data.get("use_web", False))
+    # Default to True so cached reports can be refreshed with live stats
+    use_web = bool(data.get("use_web", True))
     refresh = bool(data.get("refresh", False))
+    refresh_stats = bool(data.get("refresh_stats", False))  # User confirmed stats refresh
 
     logger.info(
         f"[FLOW] /api/scout start player='{player}' team='{team}' league='{league}' refresh={refresh}"
@@ -1649,8 +1653,17 @@ def scout():
                 cached=False,  # User paid 1 credit
             )
             
+            # Fetch the newly saved report to get the fresh created_at timestamp (User B's receipt time)
+            try:
+                saved_report = get_report(user_id, int(pg_id))
+                if saved_report and saved_report.get("created_at"):
+                    payload["created_at"] = saved_report["created_at"]
+            except Exception as e:
+                logger.warning(f"Failed to fetch created_at for saved suggestion: {e}")
+                # Fallback to source's created_at if fetch fails
+                payload["created_at"] = source_report.get("created_at")
+            
             # Update payload with IDs and credits for return
-            payload["created_at"] = source_report.get("created_at")
             payload["report_id"] = pg_id
             payload["library_id"] = pg_id
             payload["credits_remaining"] = new_balance
@@ -1694,8 +1707,6 @@ def scout():
     query_obj = {
         "player": canonical_query_player,
         "team": team,
-        "league": league,
-        "season": season,
         "use_web": True,  # Always True since server generates with web search
     }
     query_key = make_query_key(query_obj)
@@ -1713,7 +1724,7 @@ def scout():
             # Get all user's reports and check for name match
             cur.execute(
                 """
-                SELECT id, payload, report_md, player_name, created_at, cached, query
+                SELECT id, payload, report_md, player_name, created_at, updated_at, cached, query
                 FROM public.reports
                 WHERE user_id = %s
                 ORDER BY created_at DESC
@@ -1725,7 +1736,7 @@ def scout():
             
             # Check each report's canonical player name against current search
             for row in rows:
-                rid, payload, report_md, player_name, created_at, cached, query_json = row
+                rid, payload, report_md, player_name, created_at, updated_at, cached, query_json = row
                 try:
                     # Extract canonical player from query field
                     import json
@@ -1740,6 +1751,7 @@ def scout():
                             "report_md": report_md or "",
                             "player_name": player_name or "",
                             "created_at": created_at.isoformat() if created_at else None,
+                            "updated_at": updated_at.isoformat() if updated_at else (created_at.isoformat() if created_at else None),
                             "cached": bool(cached),
                         }
                         logger.info(f"[PLAYER CHECK] Found existing report for '{canonical_query_player}' → matched '{existing_canonical}' (id={rid})")
@@ -1832,11 +1844,123 @@ def scout():
         owned_payload["cached"] = True  # it's a library hit
         owned_payload["created_at"] = existing.get("created_at")
         owned_payload["report_id"] = existing.get("id")
+
+        # Force use_web True for cached hits so stats refresh can run even if stored payload/use_web was False
+        use_web = True
         try:
             increment_metric("cache_hits")
         except Exception:
             pass
         owned_payload["credits_remaining"] = get_balance(user_id)
+        
+        # ========== STATS REFRESH CHECK ==========
+        # If the cached report is stale (>20s), either prompt user or refresh if already confirmed
+        report_md_for_refresh = existing.get("report_md") or ""
+        updated_at_str = existing.get("updated_at")
+        stats_are_stale = False
+        report_age_seconds = 0
+        
+        if updated_at_str:
+            if not use_web:
+                logger.info("[STATS_REFRESH] Skipping refresh because use_web is False")
+            else:
+                try:
+                    updated_at = datetime.fromisoformat(updated_at_str.replace('Z', '+00:00'))
+                    age = datetime.now(timezone.utc) - updated_at
+                    report_age_seconds = age.total_seconds()
+                    logger.info(f"[STATS_REFRESH] Report age: {report_age_seconds:.1f} seconds")
+                    if age > timedelta(seconds=20):
+                        stats_are_stale = True
+                        logger.info(f"[STATS_REFRESH] Stats are stale (>{20}s)")
+                    else:
+                        logger.info(f"[STATS_REFRESH] Stats are fresh, serving cached version")
+                except Exception as e:
+                    logger.warning(f"[STATS_REFRESH] Failed to parse updated_at: {e}")
+        
+        # If stats are stale but user hasn't confirmed, return with metadata
+        if stats_are_stale and not refresh_stats:
+            logger.info(f"[STATS_REFRESH] Returning stale report with prompt for user confirmation")
+            owned_payload["stats_stale"] = True
+            owned_payload["stats_age_seconds"] = report_age_seconds
+            return jsonify(owned_payload)
+        
+        # If stats are stale and user confirmed refresh, charge credit and refresh
+        if stats_are_stale and refresh_stats and client:
+            logger.info(f"[STATS_REFRESH] Starting stats refresh for {player}")
+            try:
+                # Charge 1 credit for stats refresh
+                try:
+                    new_balance = spend_credits(
+                        user_id,
+                        1,
+                        reason="stats_refresh",
+                        source_type="stats_refresh",
+                        source_id=f"stats_refresh_{existing.get('id')}_{int(time.time())}",
+                    )
+                    owned_payload["credits_remaining"] = new_balance
+                except ValueError as e:
+                    if "INSUFFICIENT_CREDITS" in str(e):
+                        return jsonify({"error": "Insufficient credits"}), 402
+                    raise
+                except Exception as e:
+                    logger.error(f"[STATS_REFRESH] Failed to charge credit: {e}")
+                    return jsonify({"error": "Could not charge credit"}), 500
+
+                # Load stats-refresh prompt template
+                stats_prompt_template = load_text_prompt("prompts/stats_refresh.txt")
+                stats_user_prompt = stats_prompt_template.format(
+                    player_name=existing.get("player_name") or player,
+                    last_updated=updated_at_str or "unknown"
+                )
+                
+                logger.info(f"[STATS_REFRESH] Calling LLM for stats refresh (model={MODEL})")
+                # Call LLM for stats only (much cheaper than full report)
+                tools = [{"type": "web_search"}]
+                stats_resp = client.responses.create(
+                    model=MODEL,
+                    instructions="",
+                    input=stats_user_prompt,
+                    tools=tools,
+                )
+                fresh_stats_md = stats_resp.output_text or ""
+                logger.info(f"[STATS_REFRESH] LLM returned {len(fresh_stats_md)} chars")
+                
+                # Replace only stats sections in cached report
+                updated_report_md = replace_stats_sections(report_md_for_refresh, fresh_stats_md)
+                
+                # Update the cached report with fresh stats
+                if updated_report_md != report_md_for_refresh:
+                    logger.info(f"[STATS_REFRESH] Stats sections changed, updating cache (report_id={existing.get('id')})")
+                    try:
+                        # Rebuild payload from the original cached_row
+                        payload_obj = existing.get("payload") or {}
+                        update_report_by_id(
+                            user_id=user_id,
+                            report_id=existing.get("id"),
+                            player_name=existing.get("player_name") or player,
+                            report_md=updated_report_md,
+                            payload=payload_obj,
+                            cached=True,
+                        )
+                        # Update owned_payload markdown and HTML for response
+                        owned_payload["report_md"] = updated_report_md
+                        try:
+                            display_md = extract_display_md(updated_report_md)
+                            owned_payload["report_html"] = md_to_safe_html(display_md)
+                        except Exception:
+                            pass
+                        logger.info(f"[STATS_REFRESH] Cache updated successfully for report_id={existing.get('id')}")
+                    except Exception as e:
+                        logger.error(f"[STATS_REFRESH] Failed to update cache: {e}")
+                        # If update fails, serve stale version
+                        pass
+                else:
+                    logger.info("[STATS_REFRESH] Stats sections unchanged after refresh")
+            except Exception as e:
+                logger.error(f"[STATS_REFRESH] Stats refresh failed: {e}")
+                # If stats refresh fails, serve stale version
+                pass
+        
         return jsonify(owned_payload)
 
     # QUICK LOCAL CACHE: consult SQLite cache index to find if player exists, then fetch from Postgres
@@ -1896,6 +2020,118 @@ def scout():
                         owned_payload["created_at"] = pg_report.get("created_at")
                         owned_payload["report_id"] = pg_report.get("id")
                         owned_payload["credits_remaining"] = get_balance(user_id)
+
+                        # Force use_web True for cached hits so stats refresh can run even if stored payload/use_web was False
+                        use_web = True
+                        
+                        # ========== STATS REFRESH CHECK ==========
+                        # If the cached report is stale (>20s), either prompt user or refresh if already confirmed
+                        report_md_for_refresh = pg_report.get("report_md") or ""
+                        updated_at_str = pg_report.get("updated_at")
+                        stats_are_stale = False
+                        report_age_seconds = 0
+                        
+                        if updated_at_str:
+                            if not use_web:
+                                logger.info("[STATS_REFRESH] Skipping refresh because use_web is False")
+                            else:
+                                try:
+                                    updated_at = datetime.fromisoformat(updated_at_str.replace('Z', '+00:00'))
+                                    age = datetime.now(timezone.utc) - updated_at
+                                    report_age_seconds = age.total_seconds()
+                                    logger.info(f"[STATS_REFRESH] Report age: {report_age_seconds:.1f} seconds")
+                                    if age > timedelta(seconds=20):
+                                        stats_are_stale = True
+                                        logger.info(f"[STATS_REFRESH] Stats are stale (>{20}s)")
+                                    else:
+                                        logger.info(f"[STATS_REFRESH] Stats are fresh, serving cached version")
+                                except Exception as e:
+                                    logger.warning(f"[STATS_REFRESH] Failed to parse updated_at: {e}")
+                        
+                        # If stats are stale but user hasn't confirmed, return with metadata
+                        if stats_are_stale and not refresh_stats:
+                            logger.info(f"[STATS_REFRESH] Returning stale report with prompt for user confirmation")
+                            owned_payload["stats_stale"] = True
+                            owned_payload["stats_age_seconds"] = report_age_seconds
+                            return jsonify(owned_payload)
+                        
+                        # If stats are stale and user confirmed refresh, charge credit and refresh
+                        if stats_are_stale and refresh_stats and client:
+                            logger.info(f"[STATS_REFRESH] Starting stats refresh for {player}")
+                            try:
+                                # Charge 1 credit for stats refresh
+                                try:
+                                    new_balance = spend_credits(
+                                        user_id,
+                                        1,
+                                        reason="stats_refresh",
+                                        source_type="stats_refresh",
+                                        source_id=f"stats_refresh_{pg_report.get('id')}_{int(time.time())}",
+                                    )
+                                    owned_payload["credits_remaining"] = new_balance
+                                except ValueError as e:
+                                    if "INSUFFICIENT_CREDITS" in str(e):
+                                        return jsonify({"error": "Insufficient credits"}), 402
+                                    raise
+                                except Exception as e:
+                                    logger.error(f"[STATS_REFRESH] Failed to charge credit: {e}")
+                                    return jsonify({"error": "Could not charge credit"}), 500
+
+                                # Load stats-refresh prompt template
+                                stats_prompt_template = load_text_prompt("prompts/stats_refresh.txt")
+                                stats_user_prompt = stats_prompt_template.format(
+                                    player_name=pg_report.get("player_name") or player,
+                                    last_updated=updated_at_str or "unknown"
+                                )
+                                
+                                logger.info(f"[STATS_REFRESH] Calling LLM for stats refresh (model={MODEL})")
+                                # Call LLM for stats only (much cheaper than full report)
+                                tools = [{"type": "web_search"}]
+                                stats_resp = client.responses.create(
+                                    model=MODEL,
+                                    instructions="",
+                                    input=stats_user_prompt,
+                                    tools=tools,
+                                )
+                                fresh_stats_md = stats_resp.output_text or ""
+                                logger.info(f"[STATS_REFRESH] LLM returned {len(fresh_stats_md)} chars")
+                                
+                                # Replace only stats sections in cached report
+                                updated_report_md = replace_stats_sections(report_md_for_refresh, fresh_stats_md)
+                                
+                                # Update the cached report with fresh stats
+                                if updated_report_md != report_md_for_refresh:
+                                    logger.info(f"[STATS_REFRESH] Stats sections changed, updating cache (report_id={pg_report.get('id')})")
+                                    try:
+                                        # Rebuild payload from the original cached_row
+                                        payload_obj = pg_report.get("payload") or {}
+                                        update_report_by_id(
+                                            user_id=user_id,
+                                            report_id=pg_report.get("id"),
+                                            player_name=pg_report.get("player_name") or player,
+                                            report_md=updated_report_md,
+                                            payload=payload_obj,
+                                            cached=True,
+                                        )
+                                        # Update owned_payload markdown and HTML for response
+                                        owned_payload["report_md"] = updated_report_md
+                                        try:
+                                            display_md = extract_display_md(updated_report_md)
+                                            owned_payload["report_html"] = md_to_safe_html(display_md)
+                                        except Exception:
+                                            pass
+                                        logger.info(f"[STATS_REFRESH] Cache updated successfully for report_id={pg_report.get('id')}")
+                                    except Exception as e:
+                                        logger.error(f"[STATS_REFRESH] Failed to update cache: {e}")
+                                        # If update fails, serve stale version
+                                        pass
+                                else:
+                                    logger.info("[STATS_REFRESH] Stats sections unchanged after refresh")
+                            except Exception as e:
+                                logger.error(f"[STATS_REFRESH] Stats refresh failed: {e}")
+                                # If stats refresh fails, serve stale version
+                                pass
+                        
                         return jsonify(owned_payload)
                 except Exception as e:
                     # If Postgres lookup fails, continue to generation
@@ -2015,6 +2251,126 @@ def scout():
                         pass
                     payload["credits_remaining"] = get_balance(user_id)
                     return jsonify(payload)
+                elif pre_similar.get("type") == "suggest" and pre_similar.get("score") == 100:
+                    # Exact match (score=100) should auto-accept, not show suggestion modal
+                    # Fetch the suggested report and return it as if it were auto-matched
+                    suggestion_payload = None
+                    try:
+                        # Prefer Postgres get_report, fallback to local SQLite by id
+                        try:
+                            suggestion_payload = get_report(
+                                user_id, int(pre_similar.get("report_id"))
+                            )
+                        except Exception:
+                            # Try direct Postgres read
+                            try:
+                                pool = db._get_pool()
+                                with pool.connection() as conn_pg, conn_pg.cursor() as cur:
+                                    cur.execute(
+                                        "SELECT payload, report_md, player_name, created_at, cached FROM public.reports WHERE id = %s LIMIT 1",
+                                        (int(pre_similar.get("report_id")),),
+                                    )
+                                    prow = cur.fetchone()
+                                if prow:
+                                    payload_row, report_md = prow[0], prow[1] or ""
+                                    if payload_row:
+                                        suggestion_payload = payload_row
+                                        if (
+                                            isinstance(suggestion_payload, dict)
+                                            and "report_md"
+                                            not in suggestion_payload
+                                        ):
+                                            suggestion_payload["report_md"] = report_md
+                                    else:
+                                        from utils.parse import extract_display_md
+                                        display_md = extract_display_md(report_md)
+                                        suggestion_payload = {
+                                            "player": prow[2] or "",
+                                            "report_md": report_md,
+                                            "report_html": md_to_safe_html(display_md),
+                                            "created_at": prow[3] or None,
+                                            "cached": bool(prow[4]),
+                                        }
+                                    try:
+                                        suggestion_payload = ensure_parsed_payload(suggestion_payload)
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    
+                    # Return as auto-matched (no suggestion modal shown)
+                    # Charge 1 credit and save copy to user's library (like global cache hit)
+                    if suggestion_payload:
+                        try:
+                            # Charge 1 credit for accessing global cache report
+                            new_balance = spend_credits(
+                                user_id,
+                                1,
+                                reason="scout_exact_match",
+                                source_type="scout_request",
+                                source_id=f"exact_match_{pre_similar.get('report_id')}",
+                            )
+                        except ValueError as e:
+                            if "INSUFFICIENT_CREDITS" in str(e):
+                                return jsonify({"error": "Insufficient credits. Please top up.", "credits": get_balance(user_id)}), 402
+                            raise
+                        
+                        # Save copy to current user's library (if not already saved)
+                        user_report_id = None
+                        try:
+                            # Check if user already has this report (by query_key)
+                            existing_copy = find_report_by_query_key(user_id, query_key)
+                            if existing_copy:
+                                # Already saved, just use the existing ID
+                                user_report_id = existing_copy.get("id")
+                                logger.info(f"[EXACT MATCH] Report already in user library: id={user_report_id}")
+                            else:
+                                # Save new copy to user's library
+                                source_md = suggestion_payload.get("report_md", "")
+                                source_payload = suggestion_payload if isinstance(suggestion_payload, dict) else {}
+                                payload = dict(source_payload)
+                                payload["cached"] = True
+                                payload["report_md"] = source_md
+                                if not payload.get("player"):
+                                    payload["player"] = pre_similar.get("player_name")
+                                
+                                # Ensure structured fields
+                                try:
+                                    payload = ensure_parsed_payload(payload)
+                                except Exception:
+                                    pass
+                                
+                                # Save to user's library
+                                user_report_id = insert_report(
+                                    user_id=user_id,
+                                    player_name=pre_similar.get("player_name"),
+                                    query_obj=query_obj,
+                                    report_md=source_md,
+                                    payload=payload,
+                                    cached=True,
+                                )
+                                logger.info(f"[EXACT MATCH] Saved copy to user library: id={user_report_id}")
+                                payload["report_id"] = user_report_id
+                                payload["cached"] = True
+                                
+                                # Fetch the newly saved report to get the fresh created_at timestamp (User B's receipt time)
+                                try:
+                                    saved_report = get_report(user_id, int(user_report_id))
+                                    if saved_report and saved_report.get("created_at"):
+                                        payload["created_at"] = saved_report["created_at"]
+                                except Exception as e:
+                                    logger.warning(f"[EXACT MATCH] Failed to fetch created_at: {e}")
+                        except Exception as e:
+                            logger.warning(f"[EXACT MATCH] Failed to save copy: {e}")
+                        
+                        suggestion_payload["auto_matched"] = True
+                        suggestion_payload["credits_remaining"] = new_balance
+                        if user_report_id:
+                            suggestion_payload["report_id"] = user_report_id
+                            return jsonify(payload)
+                        return jsonify(suggestion_payload)
                 elif pre_similar.get("type") == "suggest":
                     # Try to fetch the suggested report payload (Postgres or local)
                     suggestion_payload = None
@@ -2344,79 +2700,81 @@ def scout():
 
     # Server-side override: always use web search when generating a new report
     generation_use_web = True
-
-    logger.info(f"[DEBUG] About to run global cache check for player='{player}'")
     
     # **GLOBAL CACHE CHECK**: Before generating, check if ANY user has this report
     # (not just the current user's personal cache)
     # NOTE: Use the same query_key that was computed earlier (with _canonical_query_name)
+    # SKIP global cache if refresh=true (user explicitly wants regeneration)
     logger.info("[FLOW] Global cache stage")
     global_cached_report = None
-    try:
-        pool = db._get_pool()
-        with pool.connection() as conn, conn.cursor() as cur:
-            logger.info(f"[GLOBAL CACHE] Searching for query_key: {query_key}")
-            # Search for ANY user's report with matching query_key (not user-scoped)
-            cur.execute(
-                """
-                SELECT id, payload, report_md, player_name, created_at, cached
-                FROM public.reports
-                WHERE query_key = %s
-                ORDER BY created_at DESC, id DESC
-                LIMIT 1
-                """,
-                (query_key,),
-            )
-            row = cur.fetchone()
-            if row:
-                rid, payload, report_md, player_name, created_at, cached = row
-                global_cached_report = {
-                    "id": int(rid),
-                    "payload": payload,  
-                    "report_md": report_md or "",
-                    "player_name": player_name or "",
-                    "created_at": created_at.isoformat() if created_at else None,
-                    "cached": bool(cached),
-                }
-                logger.info(f"[GLOBAL CACHE] Found report for query: {player_name}")
-            # Fallback: global fuzzy name match (avoid LLM when another user's report exists)
-            if not global_cached_report:
-                try:
-                    from utils.name_matching import names_match
-                except Exception:
-                    names_match = None
-                if names_match:
+    if not refresh:  # Only use global cache if NOT explicitly refreshing
+        try:
+            pool = db._get_pool()
+            with pool.connection() as conn, conn.cursor() as cur:
+                logger.info(f"[GLOBAL CACHE] Searching for query_key: {query_key}")
+                # Search for ANY user's report with matching query_key (not user-scoped)
+                cur.execute(
+                    """
+                    SELECT id, payload, report_md, player_name, created_at, cached
+                    FROM public.reports
+                    WHERE query_key = %s
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (query_key,),
+                )
+                row = cur.fetchone()
+                if row:
+                    rid, payload, report_md, player_name, created_at, cached = row
+                    global_cached_report = {
+                        "id": int(rid),
+                        "payload": payload,  
+                        "report_md": report_md or "",
+                        "player_name": player_name or "",
+                        "created_at": created_at.isoformat() if created_at else None,
+                        "cached": bool(cached),
+                    }
+                    logger.info(f"[GLOBAL CACHE] Found report for query: {player_name}")
+                # Fallback: global fuzzy name match (avoid LLM when another user's report exists)
+                if not global_cached_report:
                     try:
-                        cur.execute(
-                            """
-                            SELECT id, payload, report_md, player_name, created_at, cached
-                            FROM public.reports
-                            ORDER BY created_at DESC, id DESC
-                            LIMIT 100
-                            """
-                        )
-                        rows = cur.fetchall() or []
+                        from utils.name_matching import names_match
                     except Exception:
-                        rows = []
-                    player_norm = normalize_name(player, transliterate=True)
-                    # Prefer exact league/team if provided
-                    for rid, payload, report_md, player_name, created_at, cached in rows:
+                        names_match = None
+                    if names_match:
                         try:
-                            if names_match(player_norm, player_name or ""):
-                                global_cached_report = {
-                                    "id": int(rid),
-                                    "payload": payload,
-                                    "report_md": (report_md or ""),
-                                    "player_name": (player_name or ""),
-                                    "created_at": created_at.isoformat() if created_at else None,
-                                    "cached": bool(cached),
-                                }
-                                logger.info(f"[GLOBAL CACHE] Fuzzy global match found: {player_name} (id={rid})")
-                                break
+                            cur.execute(
+                                """
+                                SELECT id, payload, report_md, player_name, created_at, cached
+                                FROM public.reports
+                                ORDER BY created_at DESC, id DESC
+                                LIMIT 100
+                                """
+                            )
+                            rows = cur.fetchall() or []
                         except Exception:
-                            continue
-    except Exception as e:
-        logger.warning(f"[GLOBAL CACHE] Lookup failed: {e}")
+                            rows = []
+                        player_norm = normalize_name(player, transliterate=True)
+                        # Prefer exact league/team if provided
+                        for rid, payload, report_md, player_name, created_at, cached in rows:
+                            try:
+                                if names_match(player_norm, player_name or ""):
+                                    global_cached_report = {
+                                        "id": int(rid),
+                                        "payload": payload,
+                                        "report_md": (report_md or ""),
+                                        "player_name": (player_name or ""),
+                                        "created_at": created_at.isoformat() if created_at else None,
+                                        "cached": bool(cached),
+                                    }
+                                    logger.info(f"[GLOBAL CACHE] Fuzzy global match found: {player_name} (id={rid})")
+                                    break
+                            except Exception:
+                                continue
+        except Exception as e:
+            logger.warning(f"[GLOBAL CACHE] Lookup failed: {e}")
+    else:
+        logger.info("[GLOBAL CACHE] Skipping global cache because refresh=true (explicit regeneration)")
 
     # If global cache hit, charge 1 credit and save copy to current user's library
     if global_cached_report:
@@ -2462,6 +2820,14 @@ def scout():
             payload["report_id"] = user_report_id
             payload["cached"] = True
             payload["credits_remaining"] = new_balance
+            
+            # Fetch the newly saved report to get the fresh created_at timestamp (User B's receipt time)
+            try:
+                saved_report = get_report(user_id, int(user_report_id))
+                if saved_report and saved_report.get("created_at"):
+                    payload["created_at"] = saved_report["created_at"]
+            except Exception as e:
+                logger.warning(f"[GLOBAL CACHE] Failed to fetch created_at: {e}")
             
             # Track event
             try:
@@ -2648,52 +3014,56 @@ def scout():
         # **POST-LLM CANONICAL DEDUP**: After LLM identifies the canonical player,
         # check if the CURRENT USER already has a report with this exact canonical name.
         # If yes, return that report instead of creating a duplicate.
-        logger.info(f"[POST-LLM DEDUP] Checking if user already has report for canonical_player='{canonical_player}'")
-        try:
-            pool = db._get_pool()
-            with pool.connection() as conn, conn.cursor() as cur:
-                # Search user's reports for matching canonical player name
-                cur.execute(
-                    """
-                    SELECT id, payload, report_md, player_name, created_at, cached
-                    FROM public.reports
-                    WHERE user_id = %s AND player_name = %s
-                    ORDER BY created_at DESC, id DESC
-                    LIMIT 1
-                    """,
-                    (user_id, canonical_player),
-                )
-                existing_row = cur.fetchone()
-                if existing_row:
-                    existing_id, existing_payload, existing_report_md, existing_player_name, existing_created_at, existing_cached = existing_row
-                    logger.info(f"[POST-LLM DEDUP] User already has report for '{canonical_player}' (id={existing_id}) → returning existing report, refunding 1 credit")
-                    
-                    # Refund the credit we just charged since we're reusing existing report
-                    try:
-                        refund_credits(
-                            user_id,
-                            1,
-                            reason="post_llm_dedup",
-                            source_type="scout_request_refund",
-                            source_id=f"{request_id}:post_llm_dedup",
-                        )
-                    except Exception as e:
-                        logger.warning(f"[POST-LLM DEDUP] Failed to refund credit: {e}")
-                    
-                    # Return the existing report
-                    existing_payload_dict = existing_payload or {}
-                    existing_payload_dict["report_md"] = existing_report_md or ""
-                    try:
-                        existing_payload_dict = ensure_parsed_payload(existing_payload_dict)
-                    except Exception:
-                        pass
-                    existing_payload_dict["cached"] = bool(existing_cached)
-                    existing_payload_dict["report_id"] = int(existing_id)
-                    existing_payload_dict["library_id"] = int(existing_id)
-                    existing_payload_dict["credits_remaining"] = get_balance(user_id)
-                    return jsonify(existing_payload_dict)
-        except Exception as e:
-            logger.warning(f"[POST-LLM DEDUP] Lookup failed: {e}")
+        # Skip when refresh=true or updating a specific report id (force regenerate).
+        if not refresh and not report_id_to_update:
+            logger.info(f"[POST-LLM DEDUP] Checking if user already has report for canonical_player='{canonical_player}'")
+            try:
+                pool = db._get_pool()
+                with pool.connection() as conn, conn.cursor() as cur:
+                    # Search user's reports for matching canonical player name
+                    cur.execute(
+                        """
+                        SELECT id, payload, report_md, player_name, created_at, cached
+                        FROM public.reports
+                        WHERE user_id = %s AND player_name = %s
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT 1
+                        """,
+                        (user_id, canonical_player),
+                    )
+                    existing_row = cur.fetchone()
+                    if existing_row:
+                        existing_id, existing_payload, existing_report_md, existing_player_name, existing_created_at, existing_cached = existing_row
+                        logger.info(f"[POST-LLM DEDUP] User already has report for '{canonical_player}' (id={existing_id}) → returning existing report, refunding 1 credit")
+                        
+                        # Refund the credit we just charged since we're reusing existing report
+                        try:
+                            refund_credits(
+                                user_id,
+                                1,
+                                reason="post_llm_dedup",
+                                source_type="scout_request_refund",
+                                source_id=f"{request_id}:post_llm_dedup",
+                            )
+                        except Exception as e:
+                            logger.warning(f"[POST-LLM DEDUP] Failed to refund credit: {e}")
+                        
+                        # Return the existing report
+                        existing_payload_dict = existing_payload or {}
+                        existing_payload_dict["report_md"] = existing_report_md or ""
+                        try:
+                            existing_payload_dict = ensure_parsed_payload(existing_payload_dict)
+                        except Exception:
+                            pass
+                        existing_payload_dict["cached"] = bool(existing_cached)
+                        existing_payload_dict["report_id"] = int(existing_id)
+                        existing_payload_dict["library_id"] = int(existing_id)
+                        existing_payload_dict["credits_remaining"] = get_balance(user_id)
+                        return jsonify(existing_payload_dict)
+            except Exception as e:
+                logger.warning(f"[POST-LLM DEDUP] Lookup failed: {e}")
+        else:
+            logger.info("[POST-LLM DEDUP] Skipping because refresh=true or report_id_to_update provided")
 
         # Note: Removed local SQLite save - all reports now saved to PostgreSQL only
         saved_id = None
@@ -2721,6 +3091,16 @@ def scout():
                     cached=cached_flag,
                 )
                 logger.info(f"[SAVE] Saved report to Postgres: id={pg_id}, canonical_player='{canonical_player}', query_key_player='{canonical_query_player}'")
+            
+            # Fetch the created_at timestamp from the database so it's included in the response
+            try:
+                from db import get_report
+                saved_report = get_report(user_id, int(pg_id))
+                if saved_report and saved_report.get("created_at"):
+                    payload["created_at"] = saved_report["created_at"]
+            except Exception as e:
+                logger.warning(f"Failed to fetch created_at for newly saved report: {e}")
+            
             payload["library_id"] = int(pg_id)
         except Exception as e:
             # If Postgres write fails, this is a critical error - refund credit

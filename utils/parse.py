@@ -683,6 +683,7 @@ def extract_display_md(report_md: str) -> str:
     - removes header info lines (**Team:** etc)
     - removes sections (even if model collapses them into one line)
     - removes sources + url lines
+    - cleans up extra blank lines
     """
     if not report_md:
         return ""
@@ -704,8 +705,8 @@ def extract_display_md(report_md: str) -> str:
 
     lines = md.replace("\r\n", "\n").splitlines()
 
-    # 2) Remove the report title if present
-    if lines and re.match(r"^\s*#{1,6}\s*scouting report\b", lines[0], re.IGNORECASE):
+    # 2) Remove the report title if present (e.g., "## Scouting Report" or "## Scouting Report — Player Name")
+    if lines and re.match(r"^\s*#{1,6}\s*scouting report\b.*", lines[0], re.IGNORECASE):
         lines = lines[1:]
 
     # 3) Remove bold header info fields until first ### section
@@ -758,4 +759,9 @@ def extract_display_md(report_md: str) -> str:
     for line in cleaned:
         final_lines.append(scrub_urls(line))
 
-    return "\n".join(final_lines).strip()
+    result = "\n".join(final_lines).strip()
+    
+    # 6) Clean up multiple consecutive blank lines (collapse to max 1 blank line)
+    result = re.sub(r"\n\n+", "\n\n", result)
+    
+    return result

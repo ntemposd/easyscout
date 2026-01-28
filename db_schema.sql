@@ -17,6 +17,11 @@ CREATE TABLE IF NOT EXISTS public.credit_ledger (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Ensure idempotent ledger writes keyed by (source_type, source_id)
+CREATE UNIQUE INDEX IF NOT EXISTS credit_ledger_source_type_id_uidx
+ON public.credit_ledger(source_type, source_id)
+WHERE source_type IS NOT NULL AND source_id IS NOT NULL;
+
 -- User credits (account balances)
 CREATE TABLE IF NOT EXISTS public.user_credits (
     user_id UUID PRIMARY KEY,
@@ -32,6 +37,7 @@ CREATE TABLE IF NOT EXISTS public.reports (
     query TEXT,
     report_md TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     payload JSONB,
     cached BOOLEAN NOT NULL DEFAULT FALSE,
     query_key TEXT,
@@ -41,6 +47,7 @@ CREATE TABLE IF NOT EXISTS public.reports (
 -- Report indexes
 CREATE INDEX IF NOT EXISTS idx_reports_user_id ON public.reports(user_id);
 CREATE INDEX IF NOT EXISTS idx_reports_created_at ON public.reports(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reports_updated_at ON public.reports(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reports_player_name ON public.reports(player_name);
 CREATE INDEX IF NOT EXISTS idx_reports_payload_gin ON public.reports USING gin(payload jsonb_path_ops);
 CREATE INDEX IF NOT EXISTS idx_reports_player_name_lower ON public.reports(LOWER(player_name));

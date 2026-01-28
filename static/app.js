@@ -136,10 +136,32 @@ const sb = window.sb;
         // Mark as cached since it's from library
         data.cached = true;
 
+        // Store current report data for modal buttons
+        window._currentReportData = {
+          player: data.player || data.player_name || "Unknown",
+          team: data.team || "",
+          league: data.league || ""
+        };
+        window._currentCreditsBalance = data.credits_remaining;
+
         $("out_html").innerHTML = renderReport(data);
         window.enableTableDragScroll?.();
         setText("badge");
         setText("status", "");
+        
+        // Single scroll handler - scroll to "Player report" section
+        console.log('[openReportById] Attempting scroll...');
+        const headers = document.querySelectorAll('h2');
+        console.log('[openReportById] Found h2 count:', headers.length);
+        const reportHeader = Array.from(headers).find(h => h.textContent && h.textContent.includes('Player report'));
+        console.log('[openReportById] Report header found:', !!reportHeader, reportHeader?.textContent);
+        if (reportHeader) {
+          console.log('[openReportById] Scrolling to report header');
+          reportHeader.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else {
+          console.log('[openReportById] No header found, scrolling to top');
+          window.scrollTo(0, 0);
+        }
 
         // Track library report load
         try {
@@ -548,7 +570,7 @@ const sb = window.sb;
         const d = new Date(payload.created_at);
         const dateStr = d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
         const timeStr = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-        dateBadge = `<div class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-zinc-100 text-zinc-700">Generated ${dateStr} ${timeStr}</div>`;
+        dateBadge = `<div class="inline-flex items-center px-2.5 py-0.5 text-xs font-medium bg-zinc-100 text-zinc-700">Generated ${dateStr} ${timeStr}</div>`;
       } catch (e) {
         // Fallback if date parsing fails
         dateBadge = `<div class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-zinc-100 text-zinc-700">Generated ${payload.created_at.split('T')[0]}</div>`;
@@ -562,22 +584,16 @@ const sb = window.sb;
 
     return `
       <div class="space-y-4">
-        <div class="space-y-1">
+        <div>
           <div class="text-2xl font-bold text-zinc-900">${escapeHtml(title)}</div>
           ${dateBadge}
+        </div>
+        
+        <div class="space-y-1">
           ${verdictBlock}
         </div>
 
-        <div class="flex items-center gap-2">
-          <button id="download_pdf_btn" class="text-sm px-3 py-1 rounded-md border border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-medium transition-colors" title="Download report as PDF">
-            ⬇️ Download PDF
-          </button>  
-          <button id="regenerate_report_btn" class="text-sm px-3 py-1 rounded-md border border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-medium transition-colors" data-player="${escapeHtml(playerName)}" data-team="${escapeHtml(playerTeam)}" data-report-id="${escapeHtml(reportId)}">
-            ✨ Regenerate
-          </button>
-        </div>
-
-        <div class="grid sm:grid-cols-2 gap-4">
+          <div class="grid sm:grid-cols-2 gap-4">
           ${renderInfoTable(infoFields, payload.team || "")}
           ${renderGradesTable(grades)}
         </div>
@@ -600,6 +616,20 @@ const sb = window.sb;
 
         ${renderSeasonSnapshotTable(seasonSnapshot)}
         ${renderLast3GamesTable(last3Games)}
+
+        <section class="space-y-2">
+          <div class="flex flex-col sm:flex-row gap-2">
+            <button id="update_stats_btn" class="w-full sm:w-auto text-xs px-3 py-2 rounded-md bg-zinc-100 hover:bg-zinc-200 active:bg-zinc-300 text-zinc-700 font-medium transition-colors shadow-sm" title="Refresh player stats with latest data">
+              📊 Update
+            </button>
+            <button id="regenerate_report_btn" class="w-full sm:w-auto text-xs px-3 py-2 rounded-md bg-zinc-100 hover:bg-zinc-200 active:bg-zinc-300 text-zinc-700 font-medium transition-colors shadow-sm" data-player="${escapeHtml(playerName)}" data-team="${escapeHtml(playerTeam)}" data-report-id="${escapeHtml(reportId)}">
+              ✨ Regenerate
+            </button>
+            <button id="download_pdf_btn" class="w-full sm:w-auto text-xs px-3 py-2 rounded-md bg-zinc-100 hover:bg-zinc-200 active:bg-zinc-300 text-zinc-700 font-medium transition-colors shadow-sm" title="Download report as PDF">
+              ⬇️ Download
+            </button>  
+          </div>
+        </section>
       </div>
     `;
   }
@@ -613,39 +643,179 @@ const sb = window.sb;
     // Handle regenerate button clicks with event delegation
     const outHtml = $("out_html");
     if (outHtml) {
+      // Handle Update Stats button
+      outHtml.addEventListener("click", (e) => {
+        const btn = e.target.closest("#update_stats_btn");
+        if (!btn) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        (async () => {
+          try {
+            // Try to get player name from multiple sources
+            const playerFromTitle = document.querySelector("#out_html .text-2xl.font-bold")?.textContent || "";
+            const player = window._currentReportData?.player || playerFromTitle || "Unknown";
+            const team = window._currentReportData?.team || "";
+            const league = window._currentReportData?.league || "";
+            const reportId = window._regenerateReportId;
+            
+            // Get balance from stored data or fetch it
+            let balance = window._currentCreditsBalance;
+            if (!balance && balance !== 0) {
+              // Fetch current balance if not available
+              const token = await (window.getAccessToken ? window.getAccessToken() : null);
+              if (token) {
+                try {
+                  const res = await fetch('/api/credits', {
+                    headers: { Authorization: `Bearer ${token}` }
+                  });
+                  if (res.ok) {
+                    const data = await res.json();
+                    balance = data.credits_remaining ?? data.credits ?? "—";
+                  } else {
+                    balance = "—";
+                  }
+                } catch {
+                  balance = "—";
+                }
+              } else {
+                balance = "—";
+              }
+            }
+            
+            console.log("Update Stats clicked:", { player, team, league, reportId, balance, currentReportData: window._currentReportData });
+            
+            // Show stats refresh modal
+            const statsModal = document.getElementById("stats_refresh_modal");
+            const statsPlayerName = document.getElementById("stats_player_name");
+            const statsAgeText = document.getElementById("stats_age_text");
+            const statsBalance = document.getElementById("stats_refresh_balance");
+            const yesBtn = document.getElementById("stats_refresh_yes");
+            const noBtn = document.getElementById("stats_refresh_no");
+            const closeBtn = document.getElementById("close_stats_refresh_modal");
+            
+            if (statsPlayerName) statsPlayerName.textContent = player;
+            if (statsAgeText) statsAgeText.textContent = "outdated";
+            if (statsBalance) statsBalance.textContent = balance;
+            
+            if (statsModal) statsModal.classList.remove("hidden");
+            
+            // Wait for user response
+            const userChoice = await new Promise((resolve) => {
+              const handleYes = () => {
+                cleanup();
+                resolve(true);
+              };
+              const handleNo = () => {
+                cleanup();
+                resolve(false);
+              };
+              const cleanup = () => {
+                yesBtn.removeEventListener("click", handleYes);
+                noBtn.removeEventListener("click", handleNo);
+                closeBtn?.removeEventListener("click", handleNo);
+                statsModal.classList.add("hidden");
+              };
+              
+              yesBtn.addEventListener("click", handleYes);
+              noBtn.addEventListener("click", handleNo);
+              if (closeBtn) closeBtn.addEventListener("click", handleNo);
+            });
+            
+            if (userChoice) {
+              // User confirmed - make scout request with refresh_stats=true and report_id to update in place
+              setText("status", "Updating stats…");
+              const token = await (window.getAccessToken ? window.getAccessToken() : null);
+              const response = await fetch("/api/scout", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify({
+                  player: player,
+                  team: team,
+                  league: league,
+                  refresh_stats: true,  // Only refresh stats, not full report
+                  report_id: reportId  // Update this specific report
+                }),
+              });
+              const data = await response.json().catch(() => ({}));
+              if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+              
+              // Render the refreshed report
+              $("out_html").innerHTML = renderReport(data);
+              window.enableTableDragScroll?.();
+              setText("status", "");
+              
+              // Update stored data
+              window._currentReportData = {
+                player: data.player || data.player_name || "Unknown",
+                team: data.team || "",
+                league: data.league || ""
+              };
+              window._currentCreditsBalance = data.credits_remaining;
+            }
+          } catch (err) {
+            console.error("Error handling update stats button:", err);
+            setText("status", "");
+            setText("err", err?.message || "Failed to update stats");
+          }
+        })();
+      });
+
+      // Handle Regenerate button - open modal instead of immediately regenerating
       outHtml.addEventListener("click", (e) => {
         const btn = e.target.closest("#regenerate_report_btn");
         if (!btn) return;
         e.preventDefault();
         e.stopPropagation();
 
-        try {
-          // Extract player, team, and report_id from button data attributes
-          const player = btn.getAttribute("data-player");
-          const team = btn.getAttribute("data-team");
-          const reportId = btn.getAttribute("data-report-id");
-
-          if (!player) {
-            console.warn("Regenerate button missing player data");
-            return;
+        (async () => {
+          try {
+            const reportId = btn.getAttribute("data-report-id");
+            
+            // Get balance from stored data or fetch it
+            let balance = window._currentCreditsBalance;
+            if (!balance && balance !== 0) {
+              // Fetch current balance if not available
+              const token = await (window.getAccessToken ? window.getAccessToken() : null);
+              if (token) {
+                try {
+                  const res = await fetch('/api/credits', {
+                    headers: { Authorization: `Bearer ${token}` }
+                  });
+                  if (res.ok) {
+                    const data = await res.json();
+                    balance = data.credits_remaining ?? data.credits ?? "—";
+                  } else {
+                    balance = "—";
+                  }
+                } catch {
+                  balance = "—";
+                }
+              } else {
+                balance = "—";
+              }
+            }
+            
+            // Store data for confirmation
+            window._pendingRegenerateData = {
+              player: btn.getAttribute("data-player"),
+              team: btn.getAttribute("data-team"),
+              reportId: reportId
+            };
+            
+            // Show regenerate modal
+            const regenerateModal = document.getElementById("regenerate_modal");
+            const regenerateBalance = document.getElementById("regenerate_balance");
+            
+            if (regenerateBalance) regenerateBalance.textContent = balance;
+            if (regenerateModal) regenerateModal.classList.remove("hidden");
+          } catch (err) {
+            console.error("Error handling regenerate button:", err);
           }
-
-          // Store report_id for the regeneration request
-          window._regenerateReportId = reportId || null;
-
-          // Fill the form with these values
-          if ($("player")) $("player").value = player;
-          if ($("team")) $("team").value = team;
-
-          // Check the refresh checkbox to force regeneration
-          if ($("refresh")) $("refresh").checked = true;
-
-          // Trigger the run button click to start generation
-          const runBtn = $("run");
-          if (runBtn) runBtn.click();
-        } catch (err) {
-          console.error("Error handling regenerate button:", err);
-        }
+        })();
       });
 
       // Handle PDF download button clicks
@@ -657,11 +827,26 @@ const sb = window.sb;
 
         (async () => {
           try {
-            const reportId = window._regenerateReportId;
+            // Get report ID from stored variable or extract from the closest regenerate button
+            let reportId = window._regenerateReportId;
+            if (!reportId) {
+              // Try to get it from the regenerate button's data attribute
+              const regenerateBtn = document.getElementById("regenerate_report_btn");
+              if (regenerateBtn) {
+                reportId = regenerateBtn.getAttribute("data-report-id");
+              }
+            }
+            
             if (!reportId) {
               alert("No report to download. Generate a report first.");
               return;
             }
+            
+            // Show loader and disable button
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = "⏳ Compiling…";
+            
             const token = await (window.getAccessToken ? window.getAccessToken() : null);
             const response = await fetch(`/api/reports/${reportId}/pdf`, {
               headers: token ? { Authorization: `Bearer ${token}` } : {}
@@ -682,25 +867,77 @@ const sb = window.sb;
             window.URL.revokeObjectURL(url);
             document.body.removeChild(a);
             window.trackClientEvent?.('report_downloaded', { report_id: reportId });
+            
+            // Restore button
+            btn.disabled = false;
+            btn.textContent = originalText;
           } catch (err) {
             console.error('PDF download failed:', err);
             alert('Failed to download PDF: ' + (err.message || 'Unknown error'));
+            // Restore button
+            btn.disabled = false;
+            btn.textContent = originalText;
           }
         })();
       });
     }
 
-    // Fill example
-    on("example", "click", () => {
-      $("player").value = "Giannis Antetokounmpo";
-      $("team").value = "Milwaukee Bucks";
-      $("league").value = " ";
-      $("season").value = " ";
-      $("use_web").checked = false;
-      $("refresh").checked = false;
-      setText("badge");
-      setText("status");
-      setText("err");
+    // Modal handlers using event delegation to prevent listener stacking
+    document.addEventListener('click', (e) => {
+      // Close regenerate modal button
+      if (e.target.id === 'close_regenerate_modal') {
+        const modal = document.getElementById('regenerate_modal');
+        if (modal) modal.classList.add('hidden');
+        return;
+      }
+
+      // Cancel regenerate button
+      if (e.target.id === 'regenerate_cancel') {
+        const modal = document.getElementById('regenerate_modal');
+        if (modal) modal.classList.add('hidden');
+        return;
+      }
+
+      // Confirm regenerate button
+      if (e.target.id === 'regenerate_confirm') {
+        const modal = document.getElementById('regenerate_modal');
+        if (modal) modal.classList.add('hidden');
+        
+        // Execute regeneration
+        const data = window._pendingRegenerateData;
+        if (!data) {
+          console.warn('No regenerate data found');
+          return;
+        }
+        
+        try {
+          // Store report_id for the regeneration request (from pending data)
+          window._regenerateReportId = data.reportId || null;
+          
+          // Set a flag to force refresh on next scout request
+          window._forceRefresh = true;
+
+          // Fill the form with these values
+          if ($("player")) $("player").value = data.player;
+          if ($("team")) $("team").value = data.team;
+
+          // Trigger the run button click to start generation
+          const runBtn = $("run");
+          if (runBtn) {
+            console.log('[regenerate_confirm] Triggering regeneration with reportId:', window._regenerateReportId, 'player:', data.player);
+            runBtn.click();
+          }
+        } catch (err) {
+          console.error("Error confirming regenerate:", err);
+        }
+        return;
+      }
+
+      // Close modal when clicking outside (regenerate modal overlay)
+      if (e.target.id === 'regenerate_modal') {
+        e.target.classList.add('hidden');
+        return;
+      }
     });
 
     // Run
@@ -737,8 +974,13 @@ const sb = window.sb;
         league: $("league")?.value?.trim() || "",
         season: $("season")?.value?.trim() || "",
         use_web: !!$("use_web")?.checked,
-        refresh: !!$("refresh")?.checked,
+        refresh: !!$("refresh")?.checked || !!window._forceRefresh,
       };
+      
+      // Clear force refresh flag after using it
+      if (window._forceRefresh) {
+        window._forceRefresh = false;
+      }
 
       // If regenerating an existing report, include its ID so the backend updates it
       if (window._regenerateReportId) {
@@ -771,204 +1013,133 @@ const sb = window.sb;
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
 
-        // If server suggests a close cached match, show inline suggestion UI
+        // If stats are stale, show confirmation dialog before refreshing
+        if (data && data.stats_stale) {
+          const ageMinutes = Math.floor(data.stats_age_seconds / 60);
+          const ageHours = Math.floor(ageMinutes / 60);
+          const ageDays = Math.floor(ageHours / 24);
+          let ageText = "";
+          if (ageDays > 0) {
+            ageText = `${ageDays} day${ageDays > 1 ? 's' : ''} old`;
+          } else if (ageHours > 0) {
+            ageText = `${ageHours} hour${ageHours > 1 ? 's' : ''} old`;
+          } else {
+            ageText = `${ageMinutes} minute${ageMinutes > 1 ? 's' : ''} old`;
+          }
+          
+          // Show custom modal instead of native confirm
+          const statsModal = $("stats_refresh_modal");
+          const statsPlayerName = $("stats_player_name");
+          const statsAgeText = $("stats_age_text");
+          const statsBalance = $("stats_refresh_balance");
+          const yesBtn = $("stats_refresh_yes");
+          const noBtn = $("stats_refresh_no");
+          const closeBtn = $("close_stats_refresh_modal");
+          
+          if (statsModal && statsAgeText && yesBtn && noBtn) {
+            // Set player name
+            if (statsPlayerName) {
+              statsPlayerName.textContent = data.player || data.player_name || "This player";
+            }
+            
+            // Set age text
+            statsAgeText.textContent = ageText;
+            
+            // Set balance
+            if (statsBalance) {
+              statsBalance.textContent = data.credits_remaining !== undefined ? data.credits_remaining : "—";
+            }
+            
+            // Show modal
+            statsModal.classList.remove("hidden");
+            
+            // Wait for user response
+            const userChoice = await new Promise((resolve) => {
+              const handleYes = () => {
+                cleanup();
+                resolve(true);
+              };
+              const handleNo = () => {
+                cleanup();
+                resolve(false);
+              };
+              const cleanup = () => {
+                yesBtn.removeEventListener("click", handleYes);
+                noBtn.removeEventListener("click", handleNo);
+                closeBtn?.removeEventListener("click", handleNo);
+                statsModal.classList.add("hidden");
+              };
+              
+              yesBtn.addEventListener("click", handleYes);
+              noBtn.addEventListener("click", handleNo);
+              if (closeBtn) closeBtn.addEventListener("click", handleNo);
+            });
+            
+            if (userChoice) {
+              // User confirmed - make new request with refresh_stats=true
+              setText("status", "Updating stats…");
+              const tokenRefresh = await (window.getAccessToken ? window.getAccessToken() : null);
+              const resRefresh = await fetch("/api/scout", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  ...(tokenRefresh ? { Authorization: `Bearer ${tokenRefresh}` } : {}),
+                },
+                body: JSON.stringify({
+                  ...payload,
+                  refresh_stats: true,
+                }),
+              });
+              const dataRefresh = await resRefresh.json().catch(() => ({}));
+              if (!resRefresh.ok) throw new Error(dataRefresh.error || `Stats refresh failed (${resRefresh.status})`);
+              
+              // Replace data with refreshed version
+              Object.assign(data, dataRefresh);
+              delete data.stats_stale; // Clear the flag since we just refreshed
+            } else {
+              // User declined - just show the stale report
+              delete data.stats_stale; // Clear the flag so we don't loop
+            }
+          }
+        }
+
+        // If server suggests a close cached match, show modal
         if (data && data.match_suggestion) {
           try {
             const ms = data.match_suggestion;
             
-            // Auto-accept exact matches (score=100) without showing modal
-            if (ms.score === 100) {
-              try {
-                // Record alias mapping
-                const tokenAlias = await (window.getAccessToken ? window.getAccessToken() : null);
-                await fetch('/api/alias', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    ...(tokenAlias ? { Authorization: `Bearer ${tokenAlias}` } : {}),
-                  },
-                  body: JSON.stringify({ queried_player: player, player: ms.player_name }),
-                }).catch((err) => { console.warn('alias save failed', err); });
-              } catch (err) {
-                console.warn('alias endpoint call failed', err);
-              }
-              
-              // Accept exact match automatically
-              setText("status", "Loading exact match…");
-              const tokenAccept = await (window.getAccessToken ? window.getAccessToken() : null);
-              const rAccept = await fetch('/api/scout', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  ...(tokenAccept ? { Authorization: `Bearer ${tokenAccept}` } : {}),
-                },
-                body: JSON.stringify({
-                  player: player,
-                  team: $("team")?.value?.trim() || "",
-                  league: $("league")?.value?.trim() || "",
-                  season: $("season")?.value?.trim() || "",
-                  use_web: false,
-                  refresh: false,
-                  accept_suggestion: true,
-                  suggestion_report_id: ms.report_id,
-                }),
-              });
-              
-              const acceptResult = await rAccept.json().catch(() => ({}));
-              if (!rAccept.ok) {
-                throw new Error(acceptResult.error || `Failed to accept suggestion (${rAccept.status})`);
-              }
-              
-              // Mark as from suggestion for clear messaging
-              acceptResult.from_suggestion = true;
-              
-              // Display the result
-              $("out_html").innerHTML = renderReport(acceptResult);
-              window.enableTableDragScroll?.();
-              setText("badge");
-              setText("status", "");
-              
-              // Update credits display
-              if (typeof acceptResult.credits_remaining === "number") {
-                try {
-                  window.updateCreditsDisplay?.(acceptResult.credits_remaining);
-                } catch (err) {
-                  console.warn('Failed to update credits display', err);
-                }
-              }
-              
-              window.loadReports?.();
-              return;
+            // Build suggestion text
+            let suggestionText = `Did you mean ${ms.player_name}`;
+            if (ms.team) {
+              suggestionText += ` (${ms.team}`;
+              if (ms.league) suggestionText += `, ${ms.league}`;
+              suggestionText += ")";
+            } else if (ms.league) {
+              suggestionText += ` (${ms.league})`;
             }
+            suggestionText += "?";
             
-            // Show inline suggestion box for non-exact matches
-            const box = $("suggestion_box");
+            // Store suggestion data for event handlers
+            window._pendingSuggestion = {
+              report_id: ms.report_id,
+              player_name: ms.player_name,
+              player_query: player,
+              payload_data: payload
+            };
+            
+            // Show modal
+            const modal = $("suggestion_modal");
             const text = $("suggestion_text");
-            if (box && text) {
-              // Build suggestion text with team/league context
-              let suggestionText = `Did you mean ${ms.player_name}`;
-              if (ms.team) {
-                suggestionText += ` (${ms.team}`;
-                if (ms.league) suggestionText += `, ${ms.league}`;
-                suggestionText += ")";
-              } else if (ms.league) {
-                suggestionText += ` (${ms.league})`;
-              }
-              suggestionText += "?";
+            if (modal && text) {
               text.textContent = suggestionText;
-              box.classList.remove('hidden');
-
-              // create a Promise that resolves to 'accept'|'reject'
-              const choice = await new Promise((resolve) => {
-                const onAccept = async () => { resolve('accept'); cleanup(); };
-                const onReject = async () => { resolve('reject'); cleanup(); };
-
-                function cleanup() {
-                  try {
-                    $('suggest_accept')?.removeEventListener('click', onAccept);
-                    $('suggest_reject')?.removeEventListener('click', onReject);
-                  } catch (e) {}
-                }
-
-                $('suggest_accept')?.addEventListener('click', onAccept);
-                $('suggest_reject')?.addEventListener('click', onReject);
-              });
-
-              box.classList.add('hidden');
-
-              if (choice === 'accept') {
-                try {
-                  // Record alias mapping so future lookups avoid LLM calls
-                  const tokenAlias = await (window.getAccessToken ? window.getAccessToken() : null);
-                  await fetch('/api/alias', {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      ...(tokenAlias ? { Authorization: `Bearer ${tokenAlias}` } : {}),
-                    },
-                    body: JSON.stringify({ queried_player: player, player: ms.player_name }),
-                  }).catch((err) => { console.warn('alias save failed', err); });
-                } catch (err) {
-                  console.warn('alias endpoint call failed', err);
-                }
-                
-                // Accept suggestion by calling /api/scout with accept_suggestion=true
-                // This will charge 1 credit but skip LLM and reuse the cached report
-                try {
-                  setText("status", "Accepting suggestion…");
-                  const tokenAccept = await (window.getAccessToken ? window.getAccessToken() : null);
-                  const rAccept = await fetch('/api/scout', {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      ...(tokenAccept ? { Authorization: `Bearer ${tokenAccept}` } : {}),
-                    },
-                    body: JSON.stringify({
-                      player: player,
-                      team: $("team")?.value?.trim() || "",
-                      league: $("league")?.value?.trim() || "",
-                      season: $("season")?.value?.trim() || "",
-                      use_web: false,
-                      refresh: false,
-                      accept_suggestion: true,
-                      suggestion_report_id: ms.report_id,
-                    }),
-                  });
-                  
-                  const acceptResult = await rAccept.json().catch(() => ({}));
-                  if (!rAccept.ok) {
-                    throw new Error(acceptResult.error || `Failed to accept suggestion (${rAccept.status})`);
-                  }
-                  
-                  // Mark as from suggestion for clear messaging
-                  acceptResult.from_suggestion = true;
-                  
-                  // Display the result (already includes HTML, credit info, etc.)
-                  $("out_html").innerHTML = renderReport(acceptResult);
-                  window.enableTableDragScroll?.();
-                  setText("badge");
-                  setText("status", "");
-                  
-                  // Update credits display
-                  if (typeof acceptResult.credits_remaining === "number") {
-                    try {
-                      window.updateCreditsDisplay?.(acceptResult.credits_remaining);
-                    } catch (err) {
-                      console.warn('Failed to update credits display', err);
-                    }
-                  }
-                  
-                  window.loadReports?.();
-                  return;
-                } catch (err) {
-                  setText("err", err?.message || String(err));
-                  setText("status");
-                  console.error('Error accepting suggestion:', err);
-                }
-                return;
-              }
-
-              if (choice === 'reject') {
-                // redo generation with refresh=true to force LLM call
-                payload.refresh = true;
-                const token3 = await (window.getAccessToken ? window.getAccessToken() : null);
-                const res2 = await fetch("/api/scout", {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    ...(token3 ? { Authorization: `Bearer ${token3}` } : {}),
-                  },
-                  body: JSON.stringify(payload),
-                });
-                const data2 = await res2.json().catch(() => ({}));
-                if (!res2.ok) throw new Error(data2.error || `Request failed (${res2.status})`);
-                // replace data with new generation result
-                data = data2;
-              }
+              modal.classList.remove("hidden");
+              setText("status", "");
             }
           } catch (err) {
             console.error('Error handling match_suggestion', err);
           }
+          // Always return when match_suggestion is present - don't render as report
+          return;
         }
 
         // Update credits display if server returned it
@@ -979,9 +1150,6 @@ const sb = window.sb;
             console.warn('Failed to update credits display', err);
           }
         }
-
-        // keep markdown hidden for debugging
-        setText("out_md", data.report_md || "");
 
         // If this was a cached/library hit but structured fields are missing,
         // fetch the canonical report endpoint to ensure tables (season snapshot,
@@ -1028,6 +1196,22 @@ const sb = window.sb;
 
         // render html
         $("out_html").innerHTML = renderReport(data);
+
+        // Store current report data for modal buttons
+        window._currentReportData = {
+          player: data.player || data.player_name || "Unknown",
+          team: data.team || "",
+          league: data.league || ""
+        };
+        window._currentCreditsBalance = data.credits_remaining;
+        window._regenerateReportId = data.report_id || data.library_id || data.id;
+        
+        console.log("Report rendered, stored data:", {
+          reportData: window._currentReportData,
+          creditsBalance: window._currentCreditsBalance,
+          regenerateReportId: window._regenerateReportId,
+          dataKeys: Object.keys(data)
+        });
 
         // Enable drag-to-scroll on report tables
         window.enableTableDragScroll?.();
@@ -1088,19 +1272,13 @@ const sb = window.sb;
       }
     });
 
-    // Reports sidebar: search, click, refresh on visibility
+    // Reports sidebar: search (click handler is in index.html to avoid duplicates)
     const reportsListEl = $("reports_list");
     const reportsCountEl = $("reports_count");
     const reportSearchEl = $("report_q");
 
-    if (reportsListEl) {
-      reportsListEl.addEventListener("click", (e) => {
-        const btn = e.target.closest("[data-report-id]");
-        if (!btn) return;
-        const rid = btn.getAttribute("data-report-id");
-        openReportById(rid);
-      });
-    }
+    // Note: Click handler for reports list is in index.html's openReport() function
+    // to avoid duplicate requests. Do not add another click listener here.
 
     let searchTimer = null;
     if (reportSearchEl) {

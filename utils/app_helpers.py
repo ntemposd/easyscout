@@ -464,7 +464,8 @@ def _best_similar_report(
                     return True
             except Exception:
                 pass
-            # Fuzzy match for typos: allow if similarity >= 85% and length difference <= 2
+            # Fuzzy match for typos: allow if similarity >= 80% and length difference <= 2
+            # Lowered from 85% to catch common single-char typos (e.g., "donic" vs "doncic" = 83%)
             try:
                 if _HAS_RAPIDFUZZ and _token_set_ratio is not None:
                     sim = int(_token_set_ratio(a_last.lower(), b_last.lower()) or 0)
@@ -472,7 +473,7 @@ def _best_similar_report(
                     sim = int(SequenceMatcher(None, a_last.lower(), b_last.lower()).ratio() * 100)
                 
                 len_diff = abs(len(a_last) - len(b_last))
-                if sim >= 85 and len_diff <= 2:
+                if sim >= 80 and len_diff <= 2:
                     return True
             except Exception:
                 pass

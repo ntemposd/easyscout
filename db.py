@@ -309,7 +309,7 @@ def find_report_by_query_key(user_id: str, query_key: str) -> Optional[Dict[str,
     with _get_pool().connection() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            select id, payload, report_md, player_name, created_at, cached
+            select id, payload, report_md, player_name, created_at, updated_at, cached
             from public.reports
             where user_id = %s and query_key = %s
             order by created_at desc, id desc
@@ -322,13 +322,14 @@ def find_report_by_query_key(user_id: str, query_key: str) -> Optional[Dict[str,
     if not row:
         return None
 
-    rid, payload, report_md, player_name, created_at, cached = row
+    rid, payload, report_md, player_name, created_at, updated_at, cached = row
     return {
         "id": int(rid),
         "payload": payload,  # jsonb -> dict (psycopg) or None
         "report_md": report_md or "",
         "player_name": player_name or "",
         "created_at": created_at.isoformat() if created_at else None,
+        "updated_at": updated_at.isoformat() if updated_at else (created_at.isoformat() if created_at else None),
         "cached": bool(cached),
     }
 
@@ -359,7 +360,8 @@ def upsert_report(
                   query       = excluded.query,
                   report_md   = excluded.report_md,
                   payload     = excluded.payload,
-                  cached      = excluded.cached
+                  cached      = excluded.cached,
+                  updated_at  = now()
             returning id
             """,
             (user_id, player_name, q_text, query_key, report_md, p_text, bool(cached)),
@@ -391,7 +393,8 @@ def update_report_by_id(
                 report_md = %s,
                 payload = %s::jsonb,
                 cached = %s,
-                created_at = now()
+                created_at = now(),
+                updated_at = now()
             where id = %s and user_id = %s
             returning id
             """,
@@ -455,7 +458,7 @@ def list_reports(user_id: str, q: str = "", limit: int = 20, offset: int = 0) ->
                 # Fetch only minimal payload fields for list performance
                 cur.execute(
                     f"""
-                    select id, player_name, created_at, cached,
+                    select id, player_name, created_at, updated_at, cached,
                            jsonb_build_object(
                                'league', payload->>'league',
                                'team', payload->>'team',
@@ -485,7 +488,7 @@ def list_reports(user_id: str, q: str = "", limit: int = 20, offset: int = 0) ->
 
     results = []
     for r in rows:
-        payload = r[4] if r[4] and isinstance(r[4], dict) else {}
+        payload = r[5] if r[5] and isinstance(r[5], dict) else {}
         # Try top-level first, then fall back to info_fields
         team = (payload.get("team") or payload.get("team_name") or "").strip()
         league = (payload.get("league") or "").strip()
@@ -504,7 +507,8 @@ def list_reports(user_id: str, q: str = "", limit: int = 20, offset: int = 0) ->
             "id": int(r[0]),
             "player_name": r[1],
             "created_at": r[2].isoformat() if r[2] else None,
-            "cached": bool(r[3]),
+            "updated_at": r[3].isoformat() if r[3] else (r[2].isoformat() if r[2] else None),
+            "cached": bool(r[4]),
             "team": team,
             "league": league,
             "position": position,
@@ -563,7 +567,7 @@ def get_report(user_id: str, report_id: int) -> Optional[Dict[str, Any]]:
     with _get_pool().connection() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            select payload, report_md, player_name, created_at, cached
+            select payload, report_md, player_name, created_at, updated_at, cached
             from public.reports
             where id = %s and user_id = %s
             """,
@@ -574,7 +578,7 @@ def get_report(user_id: str, report_id: int) -> Optional[Dict[str, Any]]:
     if not row:
         return None
 
-    payload, report_md, player_name, created_at, cached = row
+    payload, report_md, player_name, created_at, updated_at, cached = row
 
     # If payload exists (jsonb), return it as the main object
     if payload:
@@ -585,6 +589,8 @@ def get_report(user_id: str, report_id: int) -> Optional[Dict[str, Any]]:
             payload["cached"] = bool(cached)
         if isinstance(payload, dict) and "created_at" not in payload and created_at:
             payload["created_at"] = created_at.isoformat()
+        if isinstance(payload, dict) and "updated_at" not in payload:
+            payload["updated_at"] = updated_at.isoformat() if updated_at else (created_at.isoformat() if created_at else None)
         return payload
 
     # fallback: minimal
@@ -593,6 +599,7 @@ def get_report(user_id: str, report_id: int) -> Optional[Dict[str, Any]]:
         "report_md": report_md or "",
         "cached": bool(cached),
         "created_at": created_at.isoformat() if created_at else None,
+        "updated_at": updated_at.isoformat() if updated_at else (created_at.isoformat() if created_at else None),
     }
 
 

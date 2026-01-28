@@ -211,6 +211,7 @@ documents/
 migrations/
 scripts/
 prompts/scout_instructions.txt
+prompts/stats_refresh.txt
 node_modules/
 
 # Database files
