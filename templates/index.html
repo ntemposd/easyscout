@@ -77,22 +77,10 @@
             </button>
             <!--<p class="text-sm">1 credit.</p>-->
 
-            <!--<button type="button" id="example"
-              class="bg-zinc-200 text-zinc-900 px-4 py-2 rounded-md text-sm hover:bg-zinc-300">
-              Fill example
-            </button>-->
-
             <span class="flex-1"></span>
           </div>
 
           <div id="err" class="text-sm text-red-600" role="alert"></div>
-          <div id="suggestion_box" class="hidden mt-3 p-3 border border-[#C1D9C7] rounded-md bg-[#E8F4EB] text-sm">
-            <div id="suggestion_text" class="mb-3 text-zinc-800 font-medium"></div>
-            <div class="flex gap-2">
-              <button type="button" id="suggest_accept" class="btn-primary">Yes</button>
-              <button type="button" id="suggest_reject" class="btn-secondary">No</button>
-            </div>
-          </div>
         </form>
       </section>
 
@@ -119,7 +107,6 @@
           <div class="text-sm text-zinc-500">Generate a report to see results here.</div>
         </div>
 
-        <pre id="out_md" class="hidden"></pre>
       </section>
 
     </div>
@@ -151,6 +138,98 @@
         </div>
       </section>
     </aside>
+  </div>
+
+  <!-- Stats Refresh Modal -->
+  <div id="stats_refresh_modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-start justify-between mb-4">
+        <h3 class="text-lg sm:text-xl font-bold">Update stats</h3>
+        <button type="button" id="close_stats_refresh_modal" class="text-zinc-400 hover:text-zinc-600 -mr-2 -mt-2 p-2">
+          <svg class="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+      
+      <div class="space-y-4">
+        <!-- Player name and age heading -->
+        <div>
+          <h4 class="text-sm sm:text-md font-semibold text-zinc-900 mb-2">
+            <span id="stats_player_name">This player</span>'s stats are <span id="stats_age_text">outdated</span>
+          </h4>
+          <p class="text-xs sm:text-sm text-zinc-600">
+            Would you like to get the latest information?
+          </p>
+        </div>
+
+        <!-- Cost and balance -->
+        <div class="p-3 sm:p-4 bg-zinc-50 rounded-lg space-y-2">
+          <div class="flex items-center justify-between text-xs sm:text-sm">
+            <span class="text-zinc-600">Cost to update</span>
+            <span class="font-bold text-zinc-900">1 credit</span>
+          </div>
+          <div class="flex items-center justify-between text-xs sm:text-sm">
+            <span class="text-zinc-600">Your balance</span>
+            <span id="stats_refresh_balance" class="font-bold text-[#6FD06B]">—</span>
+          </div>
+        </div>
+
+        <div class="flex flex-col sm:flex-row gap-3">
+          <button type="button" id="stats_refresh_no" class="flex-1 btn-neutral py-3 sm:py-2 text-sm">
+            No, keep existing
+          </button>
+          <button type="button" id="stats_refresh_yes" class="flex-1 btn-primary py-3 sm:py-2 text-sm">
+            Yes, update (1 credit)
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Regenerate Report Modal -->
+  <div id="regenerate_modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-start justify-between mb-4">
+        <h3 class="text-lg sm:text-xl font-bold">Regenerate report</h3>
+        <button type="button" id="close_regenerate_modal" class="text-zinc-400 hover:text-zinc-600 -mr-2 -mt-2 p-2">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+      
+      <div class="space-y-4">
+        <!-- Explanation -->
+        <div>
+          <h4 class="text-sm sm:text-md font-semibold text-zinc-900 mb-2">Generate a fresh report</h4>
+          <p class="text-xs sm:text-sm text-zinc-600">
+            This will create a completely new report with updated information. The current report will be replaced.
+          </p>
+        </div>
+
+        <!-- Cost and balance -->
+        <div class="p-3 sm:p-4 bg-zinc-50 rounded-lg space-y-2">
+          <div class="flex items-center justify-between text-xs sm:text-sm">
+            <span class="text-zinc-600">Cost to regenerate</span>
+            <span class="font-bold text-zinc-900">1 credit</span>
+          </div>
+          <div class="flex items-center justify-between text-xs sm:text-sm">
+            <span class="text-zinc-600">Your balance</span>
+            <span id="regenerate_balance" class="font-bold text-[#6FD06B]">—</span>
+          </div>
+        </div>
+
+        <div class="flex flex-col sm:flex-row gap-3">
+          <button type="button" id="regenerate_cancel" class="flex-1 btn-neutral py-3 sm:py-2 text-sm">
+            Cancel
+          </button>
+          <button type="button" id="regenerate_confirm" class="flex-1 btn-primary py-3 sm:py-2 text-sm">
+            Regenerate (1 credit)
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Credits Modal -->
@@ -193,6 +272,33 @@
         </div>
 
         <div id="modal_buy_err" class="text-sm text-red-600"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Suggestion Modal (Did you mean...?) -->
+  <div id="suggestion_modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <div class="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6">
+      <div class="flex items-start justify-between mb-4">
+        <h3 class="text-lg font-bold">Suggested player</h3>
+        <button type="button" id="close_suggestion_modal" class="text-zinc-400 hover:text-zinc-600">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+      
+      <div class="space-y-4">
+        <div class="text-base" id="suggestion_text">—</div>
+
+        <div class="flex gap-3">
+          <button type="button" id="suggestion_no" class="flex-1 px-4 py-2 rounded-md border border-zinc-300 bg-white text-zinc-700 font-medium hover:bg-zinc-50">
+            No
+          </button>
+          <button type="button" id="suggestion_yes" class="flex-1 btn-primary">
+            Yes
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -381,27 +487,20 @@
     // });
 
     // ---- Reports sidebar ----
-    let _lastReportOpen = { id: null, ts: 0 };
-    let _openReportMutex = false;
+    const _reportsBeingLoaded = new Set();
     async function openReport(reportId) {
+      const rid = String(reportId);
+      console.log('[openReport] Called with reportId:', rid);
+      
+      // Prevent duplicate concurrent loads of the same report
+      if (_reportsBeingLoaded.has(rid)) {
+        console.log('[openReport] Report already loading, preventing duplicate');
+        return;
+      }
+      _reportsBeingLoaded.add(rid);
+
       const err = document.getElementById("err");
       if (err) err.textContent = "";
-
-      // Prevent concurrent execution
-      if (_openReportMutex) return;
-      _openReportMutex = true;
-
-      // Guard against rapid double-click/tap on the same report
-      try {
-        const now = Date.now();
-        const rid = String(reportId);
-        if (_lastReportOpen.id === rid && (now - _lastReportOpen.ts) < 800) {
-          _openReportMutex = false;
-          return;
-        }
-        _lastReportOpen = { id: rid, ts: now };
-      } catch (e) {}
-
       const loader = document.getElementById("report_loader");
 
       try {
@@ -424,13 +523,32 @@
 
         const out = document.getElementById("out_html");
         if (out) {
+          console.log('[openReport] Rendering report');
           const renderFn = window.renderReport;
           if (typeof renderFn === "function") {
             out.innerHTML = renderFn(j);
+            // Store report data for modal buttons
+            window._currentReportData = {
+              player: j.player || j.player_name || "Unknown",
+              team: j.team || "",
+              league: j.league || ""
+            };
+            window._currentCreditsBalance = j.credits_remaining;
+            window._regenerateReportId = j.report_id || j.id || reportId;
+            console.log('[openReport] Report rendered, scrolling to report pane');
+            // Scroll to the report section
+            const reportSection = out.closest('section');
+            if (reportSection) {
+              reportSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
           } else {
             const esc = (s) => String(s || "").replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] || c));
             const html = j.report_html || "";
             out.innerHTML = html || `<pre class="text-sm">${esc(j.report_md || "")}</pre>`;
+            const reportSection = out.closest('section');
+            if (reportSection) {
+              reportSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
           }
         }
 
@@ -440,7 +558,7 @@
         if (err) err.textContent = "Failed to load report.";
       } finally {
         if (loader) loader.classList.add("hidden");
-        _openReportMutex = false;
+        _reportsBeingLoaded.delete(rid);
       }
     }
 
@@ -788,6 +906,138 @@
     }
   });
 
+  // Suggestion Modal controls
+  document.getElementById("close_suggestion_modal")?.addEventListener("click", () => {
+    const modal = document.getElementById("suggestion_modal");
+    if (modal) modal.classList.add("hidden");
+    window._pendingSuggestion = null;
+  });
+
+  document.getElementById("suggestion_yes")?.addEventListener("click", async () => {
+    const modal = document.getElementById("suggestion_modal");
+    if (!modal || !window._pendingSuggestion) return;
+    
+    modal.classList.add("hidden");
+    
+    try {
+      const sug = window._pendingSuggestion;
+      
+      // Record alias mapping
+      const tokenAlias = await (window.getAccessToken ? window.getAccessToken() : null);
+      await fetch('/api/alias', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(tokenAlias ? { Authorization: `Bearer ${tokenAlias}` } : {}),
+        },
+        body: JSON.stringify({ queried_player: sug.player_query, player: sug.player_name }),
+      }).catch((err) => { console.warn('alias save failed', err); });
+      
+      // Accept suggestion
+      const statusEl = document.getElementById("status");
+      if (statusEl) statusEl.textContent = "Accepting suggestion…";
+      const tokenAccept = await (window.getAccessToken ? window.getAccessToken() : null);
+      const res = await fetch('/api/scout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(tokenAccept ? { Authorization: `Bearer ${tokenAccept}` } : {}),
+        },
+        body: JSON.stringify({
+          player: sug.player_query,
+          team: document.getElementById("team")?.value?.trim() || "",
+          league: document.getElementById("league")?.value?.trim() || "",
+          season: document.getElementById("season")?.value?.trim() || "",
+          use_web: false,
+          refresh: false,
+          accept_suggestion: true,
+          suggestion_report_id: sug.report_id,
+        }),
+      });
+      
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Failed to accept (${res.status})`);
+      
+      // Display result
+      data.from_suggestion = true;
+      const outHtml = document.getElementById("out_html");
+      if (outHtml) outHtml.innerHTML = window.renderReport(data);
+      window.enableTableDragScroll?.();
+      const badgeEl = document.getElementById("badge");
+      if (badgeEl) badgeEl.textContent = "";
+      const statusEl2 = document.getElementById("status");
+      if (statusEl2) statusEl2.textContent = "";
+      
+      // Update credits
+      if (typeof data.credits_remaining === "number") {
+        window.updateCreditsDisplay?.(data.credits_remaining);
+      }
+      
+      // Refresh sidebar
+      window.loadReports?.();
+    } catch (err) {
+      const errEl = document.getElementById("err");
+      if (errEl) errEl.textContent = err?.message || String(err);
+      const statusEl3 = document.getElementById("status");
+      if (statusEl3) statusEl3.textContent = "";
+      console.error('Error accepting suggestion:', err);
+    }
+  });
+
+  document.getElementById("suggestion_no")?.addEventListener("click", async () => {
+    const modal = document.getElementById("suggestion_modal");
+    if (!modal || !window._pendingSuggestion) return;
+    
+    modal.classList.add("hidden");
+    
+    // User rejected - regenerate with refresh=true to force LLM
+    const sug = window._pendingSuggestion;
+    window._pendingSuggestion = null;
+    
+    if (sug.payload_data) {
+      try {
+        sug.payload_data.refresh = true;
+        const statusEl = document.getElementById("status");
+        if (statusEl) statusEl.textContent = "Generating new report…";
+        
+        const token = await (window.getAccessToken ? window.getAccessToken() : null);
+        const res = await fetch("/api/scout", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(sug.payload_data),
+        });
+        
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+        
+        // Display result
+        const outHtml = document.getElementById("out_html");
+        if (outHtml) outHtml.innerHTML = window.renderReport(data);
+        window.enableTableDragScroll?.();
+        const badgeEl = document.getElementById("badge");
+        if (badgeEl) badgeEl.textContent = "";
+        const statusEl2 = document.getElementById("status");
+        if (statusEl2) statusEl2.textContent = "";
+        
+        // Update credits
+        if (typeof data.credits_remaining === "number") {
+          window.updateCreditsDisplay?.(data.credits_remaining);
+        }
+        
+        // Refresh sidebar
+        window.loadReports?.();
+      } catch (err) {
+        const errEl = document.getElementById("err");
+        if (errEl) errEl.textContent = err?.message || String(err);
+        const statusEl3 = document.getElementById("status");
+        if (statusEl3) statusEl3.textContent = "";
+        console.error('Error generating new report:', err);
+      }
+    }
+  });
 
 </script>
 

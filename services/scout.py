@@ -1,9 +1,11 @@
 # services/scout.py
 from __future__ import annotations
 
+import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-from db import PROMPT_VERSION, init_db, make_query_key, find_report_by_query_key
+from db import PROMPT_VERSION, init_db, make_query_key, find_report_by_query_key, update_report_by_id, spend_credits
 from utils.parse import (
     extract_display_md,
     extract_grades,
@@ -12,7 +14,11 @@ from utils.parse import (
     extract_season_snapshot,
 )
 from utils.render import md_to_safe_html
+from utils.stats_refresh import replace_stats_sections
+from utils.prompts import load_text_prompt
 import time
+
+logger = logging.getLogger(__name__)
 
 
 def _build_payload_from_report(
@@ -137,6 +143,98 @@ def get_or_generate_scout_report(
             cached_row = find_report_by_query_key(user_id, query_key)
             if cached_row:
                 report_md = cached_row.get("report_md") or ""
+                cached_id = cached_row.get("id")
+                updated_at_str = cached_row.get("updated_at")
+                
+                logger.info(f"Found cached report for {player}, updated_at={updated_at_str}")
+                
+                # Check if stats are stale (>30 seconds since last update for testing)
+                needs_stats_refresh = False
+                if updated_at_str:
+                    try:
+                        updated_at = datetime.fromisoformat(updated_at_str.replace('Z', '+00:00'))
+                        age = datetime.now(timezone.utc) - updated_at
+                        logger.info(f"Report age: {age.total_seconds():.1f} seconds")
+                        if age > timedelta(seconds=20):
+                            needs_stats_refresh = True
+                            logger.info(f"Stats are stale (>{20}s), triggering refresh")
+                        else:
+                            logger.info(f"Stats are fresh, serving cached version")
+                    except Exception as e:
+                        logger.warning(f"Failed to parse updated_at: {e}")
+                        pass
+                
+                # If stats are stale, refresh them with a lightweight LLM call
+                if needs_stats_refresh and client and use_web:
+                    logger.info(f"Starting stats refresh for {player}")
+                    try:
+                        # Charge 1 credit for stats refresh; if insufficient, serve stale
+                        try:
+                            spend_credits(
+                                user_id,
+                                1,
+                                reason="stats_refresh",
+                                source_type="stats_refresh",
+                                source_id=f"stats_refresh_{cached_id}_{int(time.time())}",
+                            )
+                        except ValueError as e:
+                            if "INSUFFICIENT_CREDITS" in str(e):
+                                logger.warning("Stats refresh skipped due to insufficient credits")
+                                raise
+                            raise
+                        except Exception as e:
+                            logger.error(f"Failed to charge credit for stats refresh: {e}")
+                            raise
+
+                        # Load stats-refresh prompt template
+                        stats_prompt_template = load_text_prompt("prompts/stats_refresh.txt")
+                        stats_user_prompt = stats_prompt_template.format(
+                            player_name=cached_row.get("player_name") or player,
+                            last_updated=updated_at_str or "unknown"
+                        )
+                        
+                        logger.info(f"Calling LLM for stats refresh (model={model})")
+                        # Call LLM for stats only (much cheaper than full report)
+                        tools = [{"type": "web_search"}]
+                        stats_resp = client.responses.create(
+                            model=model,
+                            instructions="",
+                            input=stats_user_prompt,
+                            tools=tools,
+                        )
+                        fresh_stats_md = stats_resp.output_text or ""
+                        logger.info(f"LLM stats refresh returned {len(fresh_stats_md)} chars")
+                        
+                        # Replace only stats sections in cached report
+                        updated_report_md = replace_stats_sections(report_md, fresh_stats_md)
+                        
+                        # Update the cached report with fresh stats
+                        if updated_report_md != report_md:
+                            logger.info(f"Stats sections changed, updating cache (report_id={cached_id})")
+                            try:
+                                # Rebuild payload from the original cached_row
+                                payload_obj = cached_row.get("payload") or {}
+                                update_report_by_id(
+                                    user_id=user_id,
+                                    report_id=cached_id,
+                                    player_name=cached_row.get("player_name") or player,
+                                    report_md=updated_report_md,
+                                    payload=payload_obj,
+                                    cached=True,
+                                )
+                                report_md = updated_report_md
+                                logger.info(f"Cache updated successfully for report_id={cached_id}")
+                            except Exception as e:
+                                logger.error(f"Failed to update cache: {e}")
+                                # If update fails, serve stale version
+                                pass
+                        else:
+                            logger.info("Stats sections unchanged after refresh")
+                    except Exception as e:
+                        logger.error(f"Stats refresh failed: {e}")
+                        # If stats refresh fails, serve stale version
+                        pass
+                
                 return _build_payload_from_report(
                     report_md=report_md,
                     player=cached_row.get("player_name") or player,

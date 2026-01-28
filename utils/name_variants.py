@@ -50,6 +50,9 @@ NICKNAME_MAP = {
     "will": "william",
     "willie": "william",
     
+    # European name variants
+    "luca": "luka",          # Common typo for Luka Dončić
+    
     # Add more variants here as needed:
     # "nickname": "full_name",
 }
