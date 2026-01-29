@@ -1,5 +1,7 @@
 # auth.py
 import os
+from functools import wraps
+from flask import jsonify
 
 from supabase import create_client
 
@@ -64,3 +66,60 @@ def require_user_id(request) -> str:
         raise PermissionError("Missing user id (sub)")
 
     return user_id
+
+
+def app_base_url(request) -> str:
+    """Get the base URL for the application.
+    
+    Prefers explicit APP_BASE_URL env var for production (Render/proxy),
+    falls back to request.host_url for local development.
+    """
+    return (os.getenv("APP_BASE_URL") or request.host_url).rstrip("/")
+
+
+def require_admin_user(request) -> str:
+    """Require the current user to be an admin for dev endpoints.
+
+    Admins are configured via the `ADMIN_USERS` env var as a comma-separated
+    list of user_ids. If `ADMIN_USERS` is not set, fall back to requiring
+    `DEV_TOOLS=1` and any authenticated user.
+    
+    Returns:
+        str: The authenticated admin user_id
+        
+    Raises:
+        PermissionError: If user is not admin or dev tools disabled
+    """
+    if os.getenv("ADMIN_USERS"):
+        try:
+            user_id = require_user_id(request)
+        except PermissionError as e:
+            raise PermissionError(str(e))
+        admins = [
+            s.strip() for s in os.getenv("ADMIN_USERS", "").split(",") if s.strip()
+        ]
+        if user_id not in admins:
+            raise PermissionError("not an admin")
+        return user_id
+
+    # No explicit admin list configured; require DEV_TOOLS=1 and authenticated
+    if os.getenv("DEV_TOOLS") != "1":
+        raise PermissionError("dev tools disabled")
+    return require_user_id(request)
+
+
+def require_auth(f):
+    """Decorator: Require user authentication and return 401 on PermissionError.
+    
+    Automatically extracts user_id from request and injects as first argument.
+    Returns 401 JSON error if authentication fails.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        from flask import request
+        try:
+            user_id = require_user_id(request)
+            return f(user_id, *args, **kwargs)
+        except PermissionError as e:
+            return jsonify({"error": str(e)}), 401
+    return decorated_function

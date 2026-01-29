@@ -4,6 +4,26 @@
 const sb = window.sb;
 
 (function () {
+  // ---------- Enhanced logging for debugging ----------
+  const DEBUG = false; // Set to false to disable console logs
+  const log = {
+    info: (tag, msg, data = null) => {
+      if (DEBUG) console.log(`%c[${tag}]%c ${msg}`, "color: #2563eb; font-weight: bold", "color: inherit", data || "");
+    },
+    warn: (tag, msg, data = null) => {
+      if (DEBUG) console.warn(`%c[${tag}]%c ${msg}`, "color: #f59e0b; font-weight: bold", "color: inherit", data || "");
+    },
+    error: (tag, msg, data = null) => {
+      if (DEBUG) console.error(`%c[${tag}]%c ${msg}`, "color: #ef4444; font-weight: bold", "color: inherit", data || "");
+    },
+    success: (tag, msg, data = null) => {
+      if (DEBUG) console.log(`%c[${tag}]%c ${msg} ✅`, "color: #10b981; font-weight: bold", "color: inherit", data || "");
+    }
+  };
+  
+  // Expose global logger
+  window.__debug = log;
+
   // ---------- tiny helpers ----------
   const $ = (id) => document.getElementById(id);
 
@@ -150,16 +170,11 @@ const sb = window.sb;
         setText("status", "");
         
         // Single scroll handler - scroll to "Player report" section
-        console.log('[openReportById] Attempting scroll...');
         const headers = document.querySelectorAll('h2');
-        console.log('[openReportById] Found h2 count:', headers.length);
         const reportHeader = Array.from(headers).find(h => h.textContent && h.textContent.includes('Player report'));
-        console.log('[openReportById] Report header found:', !!reportHeader, reportHeader?.textContent);
         if (reportHeader) {
-          console.log('[openReportById] Scrolling to report header');
           reportHeader.scrollIntoView({ behavior: 'smooth', block: 'start' });
         } else {
-          console.log('[openReportById] No header found, scrolling to top');
           window.scrollTo(0, 0);
         }
 
@@ -570,10 +585,29 @@ const sb = window.sb;
         const d = new Date(payload.created_at);
         const dateStr = d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
         const timeStr = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-        dateBadge = `<div class="inline-flex items-center px-2.5 py-0.5 text-xs font-medium bg-zinc-100 text-zinc-700">Generated ${dateStr} ${timeStr}</div>`;
+        dateBadge = `<div class="timestamp-badge generated">Generated ${dateStr} ${timeStr}</div>`;
       } catch (e) {
         // Fallback if date parsing fails
-        dateBadge = `<div class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-zinc-100 text-zinc-700">Generated ${payload.created_at.split('T')[0]}</div>`;
+        dateBadge = `<div class="timestamp-badge generated">Generated ${payload.created_at.split('T')[0]}</div>`;
+      }
+    }
+
+    // Stats badge
+    let statsBadge = "";
+    const statsUpdatedAt = payload.stats_updated_at || payload.updated_at || payload.created_at;
+    const reportGeneratedAt = payload.report_generated_at || payload.created_at;
+    const statsWasRefreshed = !!payload.stats_updated_at && statsUpdatedAt && reportGeneratedAt && statsUpdatedAt !== reportGeneratedAt;
+    const statsBadgeLabel = statsWasRefreshed ? "Stats updated" : "Stats generated";
+    // Show badge whenever we have a timestamp (initial generation or refresh)
+    if (statsUpdatedAt) {
+      try {
+        const u = new Date(statsUpdatedAt);
+        const uDate = u.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+        const uTime = u.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+        statsBadge = `<div class="timestamp-badge stats-updated">${statsBadgeLabel} ${uDate} ${uTime}</div>`;
+      } catch (e) {
+        console.error('[renderReport] Badge date formatting error:', e);
+        statsBadge = `<div class="timestamp-badge stats-updated">${statsBadgeLabel}</div>`;
       }
     }
 
@@ -586,7 +620,9 @@ const sb = window.sb;
       <div class="space-y-4">
         <div>
           <div class="text-2xl font-bold text-zinc-900">${escapeHtml(title)}</div>
-          ${dateBadge}
+          <div class="flex flex-wrap gap-2">
+            ${dateBadge}
+          </div>
         </div>
         
         <div class="space-y-1">
@@ -614,19 +650,28 @@ const sb = window.sb;
           </div>
         </section>
 
-        ${renderSeasonSnapshotTable(seasonSnapshot)}
-        ${renderLast3GamesTable(last3Games)}
+        <hr class="border-t border-zinc-200 my-6" />
+        
+        <section class="space-y-3">
+          <div>
+            <h2 class="text-lg font-semibold text-zinc-900">Brief Stats</h2>
+            ${statsBadge ? `<div class="mt-1">${statsBadge}</div>` : ''}
+          </div>
+          
+          ${renderSeasonSnapshotTable(seasonSnapshot)}
+          ${renderLast3GamesTable(last3Games)}
+        </section>
 
         <section class="space-y-2">
           <div class="flex flex-col sm:flex-row gap-2">
             <button id="update_stats_btn" class="w-full sm:w-auto text-xs px-3 py-2 rounded-md bg-zinc-100 hover:bg-zinc-200 active:bg-zinc-300 text-zinc-700 font-medium transition-colors shadow-sm" title="Refresh player stats with latest data">
-              📊 Update
+              📋 Update stats
             </button>
             <button id="regenerate_report_btn" class="w-full sm:w-auto text-xs px-3 py-2 rounded-md bg-zinc-100 hover:bg-zinc-200 active:bg-zinc-300 text-zinc-700 font-medium transition-colors shadow-sm" data-player="${escapeHtml(playerName)}" data-team="${escapeHtml(playerTeam)}" data-report-id="${escapeHtml(reportId)}">
-              ✨ Regenerate
+              🔄 Regenerate report
             </button>
             <button id="download_pdf_btn" class="w-full sm:w-auto text-xs px-3 py-2 rounded-md bg-zinc-100 hover:bg-zinc-200 active:bg-zinc-300 text-zinc-700 font-medium transition-colors shadow-sm" title="Download report as PDF">
-              ⬇️ Download
+              ⬇️ Download PDF
             </button>  
           </div>
         </section>
@@ -659,31 +704,28 @@ const sb = window.sb;
             const league = window._currentReportData?.league || "";
             const reportId = window._regenerateReportId;
             
-            // Get balance from stored data or fetch it
-            let balance = window._currentCreditsBalance;
-            if (!balance && balance !== 0) {
-              // Fetch current balance if not available
-              const token = await (window.getAccessToken ? window.getAccessToken() : null);
-              if (token) {
-                try {
-                  const res = await fetch('/api/credits', {
-                    headers: { Authorization: `Bearer ${token}` }
-                  });
-                  if (res.ok) {
-                    const data = await res.json();
-                    balance = data.credits_remaining ?? data.credits ?? "—";
-                  } else {
-                    balance = "—";
-                  }
-                } catch {
-                  balance = "—";
+            // Always fetch fresh balance from server
+            log.info("STATS_REFRESH", "Fetching current credits balance");
+            let balance = "—";
+            const token = await (window.getAccessToken ? window.getAccessToken() : null);
+            if (token) {
+              try {
+                const res = await fetch('/api/credits', {
+                  headers: { Authorization: `Bearer ${token}` }
+                });
+                if (res.ok) {
+                  const data = await res.json();
+                  balance = data.credits_remaining ?? data.credits ?? "—";
+                  log.info("STATS_REFRESH", "Current balance fetched", balance);
+                } else {
+                  log.warn("STATS_REFRESH", "Failed to fetch balance", res.status);
                 }
-              } else {
-                balance = "—";
+              } catch (err) {
+                log.error("STATS_REFRESH", "Error fetching balance", err);
               }
             }
             
-            console.log("Update Stats clicked:", { player, team, league, reportId, balance, currentReportData: window._currentReportData });
+            log.info("STATS_REFRESH", "Opening modal", { player, team, league, reportId, balance });
             
             // Show stats refresh modal
             const statsModal = document.getElementById("stats_refresh_modal");
@@ -697,6 +739,28 @@ const sb = window.sb;
             if (statsPlayerName) statsPlayerName.textContent = player;
             if (statsAgeText) statsAgeText.textContent = "outdated";
             if (statsBalance) statsBalance.textContent = balance;
+            
+            // Check if enough time has passed since last update (20 second threshold)
+            const STATS_REFRESH_THRESHOLD_MS = 20000; // 20 seconds
+            const createdAtTime = window._currentReportData?.created_at ? new Date(window._currentReportData.created_at).getTime() : 0;
+            const statsUpdatedTime = window._currentReportData?.stats_updated_at ? new Date(window._currentReportData.stats_updated_at).getTime() : createdAtTime;
+            const now = Date.now();
+            const deltaMs = now - statsUpdatedTime;
+            const canRefresh = deltaMs >= STATS_REFRESH_THRESHOLD_MS;
+            const secondsRemaining = Math.ceil((STATS_REFRESH_THRESHOLD_MS - deltaMs) / 1000);
+            
+            // Disable button if threshold not met
+            if (!canRefresh) {
+              yesBtn.disabled = true;
+              yesBtn.classList.add("opacity-50", "cursor-not-allowed");
+              const countdownEl = document.createElement("div");
+              countdownEl.className = "text-xs text-zinc-600 mt-2";
+              countdownEl.textContent = `Wait ${secondsRemaining}s before refreshing`;
+              yesBtn.parentElement.appendChild(countdownEl);
+            } else {
+              yesBtn.disabled = false;
+              yesBtn.classList.remove("opacity-50", "cursor-not-allowed");
+            }
             
             if (statsModal) statsModal.classList.remove("hidden");
             
@@ -724,8 +788,36 @@ const sb = window.sb;
             
             if (userChoice) {
               // User confirmed - make scout request with refresh_stats=true and report_id to update in place
-              setText("status", "Updating stats…");
+              log.info("STATS_REFRESH", "User confirmed, starting refresh", { player, reportId });
+              
+              // Show loader in Brief Stats section
+              const briefStatsHeading = Array.from(document.querySelectorAll("#out_html h2")).find(h => h.textContent.includes("Brief Stats"));
+              let statsContainer = briefStatsHeading ? briefStatsHeading.closest("section") : null;
+              
+              if (statsContainer) {
+                // Replace with loader
+                statsContainer.innerHTML = `
+                  <div class="flex items-center justify-between">
+                    <h2 class="text-lg font-semibold text-zinc-900">Brief Stats</h2>
+                  </div>
+                  <div class="flex items-center justify-center py-12">
+                    <div class="flex items-center gap-2">
+                      <svg class="animate-spin h-6 w-6 text-[#0E2018]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                      </svg>
+                      <div class="text-sm text-zinc-700">Updating stats...</div>
+                    </div>
+                  </div>
+                `;
+                log.info("STATS_REFRESH", "Loader shown in Brief Stats section");
+              } else {
+                log.warn("STATS_REFRESH", "Brief Stats section not found");
+              }
+              
               const token = await (window.getAccessToken ? window.getAccessToken() : null);
+              log.info("STATS_REFRESH", "Auth token obtained", !!token);
+              
               const response = await fetch("/api/scout", {
                 method: "POST",
                 headers: {
@@ -740,13 +832,27 @@ const sb = window.sb;
                   report_id: reportId  // Update this specific report
                 }),
               });
+              
+              log.info("STATS_REFRESH", "Response received", { status: response.status });
               const data = await response.json().catch(() => ({}));
-              if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+              log.info("STATS_REFRESH", "Response parsed", { 
+                ok: response.ok,
+                credits_remaining: data.credits_remaining,
+                report_id: data.report_id,
+                keys: Object.keys(data).slice(0, 10)
+              });
+              
+              if (!response.ok) {
+                log.error("STATS_REFRESH", "Request failed", data.error);
+                throw new Error(data.error || `Request failed (${response.status})`);
+              }
               
               // Render the refreshed report
-              $("out_html").innerHTML = renderReport(data);
+              log.info("STATS_REFRESH", "Rendering updated report", { has_report_html: !!data.report_html, report_html_len: data.report_html?.length });
+              const renderedHtml = renderReport(data);
+              log.info("STATS_REFRESH", "Report rendered", { html_len: renderedHtml?.length });
+              $("out_html").innerHTML = renderedHtml;
               window.enableTableDragScroll?.();
-              setText("status", "");
               
               // Update stored data
               window._currentReportData = {
@@ -755,6 +861,24 @@ const sb = window.sb;
                 league: data.league || ""
               };
               window._currentCreditsBalance = data.credits_remaining;
+              log.info("STATS_REFRESH", "Credits balance updated", data.credits_remaining);
+              
+              // Update credits display in speech bubble immediately
+              if (typeof data.credits_remaining === "number") {
+                log.info("STATS_REFRESH", "Updating credits bubble display", data.credits_remaining);
+                window.updateCreditsDisplay?.(data.credits_remaining);
+              } else {
+                log.warn("STATS_REFRESH", "credits_remaining missing from response", typeof data.credits_remaining);
+              }
+              
+              // Close the modal to show the updated report
+              const modal = document.getElementById("stats_modal");
+              if (modal) {
+                modal.classList.add("hidden");
+                log.info("STATS_REFRESH", "Modal closed");
+              }
+              
+              log.success("STATS_REFRESH", "Stats refresh complete");
             }
           } catch (err) {
             console.error("Error handling update stats button:", err);
@@ -775,27 +899,24 @@ const sb = window.sb;
           try {
             const reportId = btn.getAttribute("data-report-id");
             
-            // Get balance from stored data or fetch it
-            let balance = window._currentCreditsBalance;
-            if (!balance && balance !== 0) {
-              // Fetch current balance if not available
-              const token = await (window.getAccessToken ? window.getAccessToken() : null);
-              if (token) {
-                try {
-                  const res = await fetch('/api/credits', {
-                    headers: { Authorization: `Bearer ${token}` }
-                  });
-                  if (res.ok) {
-                    const data = await res.json();
-                    balance = data.credits_remaining ?? data.credits ?? "—";
-                  } else {
-                    balance = "—";
-                  }
-                } catch {
-                  balance = "—";
+            // Always fetch fresh balance from server
+            log.info("REGENERATE", "Fetching current credits balance");
+            let balance = "—";
+            const token = await (window.getAccessToken ? window.getAccessToken() : null);
+            if (token) {
+              try {
+                const res = await fetch('/api/credits', {
+                  headers: { Authorization: `Bearer ${token}` }
+                });
+                if (res.ok) {
+                  const data = await res.json();
+                  balance = data.credits_remaining ?? data.credits ?? "—";
+                  log.info("REGENERATE", "Current balance fetched", balance);
+                } else {
+                  log.warn("REGENERATE", "Failed to fetch balance", res.status);
                 }
-              } else {
-                balance = "—";
+              } catch (err) {
+                log.error("REGENERATE", "Error fetching balance", err);
               }
             }
             
@@ -884,8 +1005,10 @@ const sb = window.sb;
 
     // Modal handlers using event delegation to prevent listener stacking
     document.addEventListener('click', (e) => {
-      // Close regenerate modal button
-      if (e.target.id === 'close_regenerate_modal') {
+      // Close regenerate modal button (handle SVG clicks too)
+      const closeBtn = e.target.closest('#close_regenerate_modal');
+      if (closeBtn) {
+        log.info("REGENERATE", "Close button clicked");
         const modal = document.getElementById('regenerate_modal');
         if (modal) modal.classList.add('hidden');
         return;
@@ -924,7 +1047,6 @@ const sb = window.sb;
           // Trigger the run button click to start generation
           const runBtn = $("run");
           if (runBtn) {
-            console.log('[regenerate_confirm] Triggering regeneration with reportId:', window._regenerateReportId, 'player:', data.player);
             runBtn.click();
           }
         } catch (err) {
@@ -1012,6 +1134,11 @@ const sb = window.sb;
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+
+        // Show notification if stats were auto-refreshed
+        if (data.stats_refreshed) {
+          showToast("Stats updated with latest data", "success");
+        }
 
         // If stats are stale, show confirmation dialog before refreshing
         if (data && data.stats_stale) {
@@ -1205,13 +1332,6 @@ const sb = window.sb;
         };
         window._currentCreditsBalance = data.credits_remaining;
         window._regenerateReportId = data.report_id || data.library_id || data.id;
-        
-        console.log("Report rendered, stored data:", {
-          reportData: window._currentReportData,
-          creditsBalance: window._currentCreditsBalance,
-          regenerateReportId: window._regenerateReportId,
-          dataKeys: Object.keys(data)
-        });
 
         // Enable drag-to-scroll on report tables
         window.enableTableDragScroll?.();

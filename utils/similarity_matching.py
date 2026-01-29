@@ -1,15 +1,33 @@
-# utils/app_helpers.py
-"""Helper utilities extracted from app.py to keep the Flask app lean.
+"""Report similarity matching using embeddings and fuzzy name matching.
 
-This module contains non-request-facing helpers only; imports are local
-where needed to avoid circular imports with `app.py`.
+Provides functions to find similar player reports via:
+1. Embedding vectors (fast, semantic similarity)
+2. Fuzzy name matching (comprehensive, handles typos)
+
+Used by the scout service to find existing reports before generating new ones.
 """
-from difflib import SequenceMatcher
+
+import logging
 import os
 import re
 import sys
 import time
 
+from utils.normalize import normalize_name
+from utils.name_matching import (
+    _compute_name_similarity,
+    _check_first_name_alignment,
+    _last_names_align,
+    FIRSTNAME_REQUIRE,
+    FIRSTNAME_SECONDARY,
+    LASTNAME_HIGH,
+)
+from utils.name_variants import NICKNAME_MAP
+from utils.phonetic import phonetic_key
+
+logger = logging.getLogger(__name__)
+
+# Fuzzy matching library setup
 try:
     from rapidfuzz import fuzz
 
@@ -27,348 +45,6 @@ except Exception:
     _token_sort_ratio = None
     _token_set_ratio = None
     _HAS_RAPIDFUZZ = False
-
-from utils.phonetic import phonetic_key
-import logging
-from utils.normalize import normalize_name
-from utils.parse import extract_display_md
-from utils.render import md_to_safe_html
-import os
-
-logger = logging.getLogger(__name__)
-
-# --- Analytics (optional) ---
-try:
-    try:
-        # Newer SDKs expose Client; alias it to Posthog for compatibility
-        from posthog import Client as Posthog
-    except Exception:
-        # Older SDKs expose Posthog directly
-        from posthog import Posthog  # type: ignore
-
-    _POSTHOG_API_KEY = os.getenv("POSTHOG_API_KEY")
-    _POSTHOG_HOST = os.getenv("POSTHOG_HOST") or "https://app.posthog.com"
-    if _POSTHOG_API_KEY and Posthog:
-        _analytics_client = Posthog(project_api_key=_POSTHOG_API_KEY, host=_POSTHOG_HOST)
-        try:
-            logging.getLogger("posthog").info("PostHog analytics initialized")
-        except Exception:
-            pass
-    else:
-        _analytics_client = None
-except Exception:
-    _analytics_client = None
-
-
-def track_event(distinct_id: str | None, event: str, properties: dict | None = None) -> None:
-    """Safely send an event to PostHog if configured. No-op when unavailable.
-
-    `distinct_id` may be `None` for anonymous events.
-    """
-    logger = logging.getLogger("hoopscout.analytics")
-    try:
-        if not _analytics_client:
-            logger.info("analytics disabled - dropping event %s", event)
-            return
-
-        immediate = os.getenv("POSTHOG_IMMEDIATE_FLUSH") == "1"
-
-        if immediate:
-            # Use a fresh short-lived client so we can flush immediately without
-            # affecting the global client state.
-            try:
-                from posthog import Client as PH
-
-                ph = PH(project_api_key=os.getenv("POSTHOG_API_KEY"), host=os.getenv("POSTHOG_HOST") or "https://app.posthog.com")
-                try:
-                    ph.capture(distinct_id=distinct_id or "anonymous", event=event, properties=properties or {})
-                except TypeError:
-                    import posthog as ph_mod
-
-                    ph_mod.capture(distinct_id or "anonymous", event, properties=properties or {})
-                try:
-                    ph.shutdown()
-                except Exception:
-                    pass
-                logger.info("event flushed immediately: %s with properties: %s", event, properties or {})
-                return
-            except Exception as e:
-                logger.exception("Immediate flush failed, falling back to pooled client: %s", e)
-
-        # Normal path: use pooled client
-        logger.info("tracking event %s for %s: %s", event, distinct_id or "anonymous", properties or {})
-        try:
-            _analytics_client.capture(distinct_id=distinct_id or "anonymous", event=event, properties=properties or {})
-            logger.info("event queued (client.capture): %s", event)
-            return
-        except TypeError:
-            try:
-                import posthog as posthog_module
-
-                logger.info("falling back to module-level posthog.capture for event %s", event)
-                posthog_module.capture(distinct_id or "anonymous", event, properties=properties or {})
-                logger.info("event queued (module.capture): %s", event)
-                return
-            except Exception as e2:
-                logger.exception("Fallback posthog.capture failed: %s", e2)
-                return
-    except Exception as e:
-        logger.exception("Error sending analytics event: %s", e)
-        # Do not allow analytics failures to affect app behavior
-        return
-
-
-def alias_user(previous_id: str, distinct_id: str) -> None:
-    """Link anonymous ID with authenticated user ID in PostHog.
-    
-    Automatically merges all events from previous_id into distinct_id's profile.
-    """
-    logger = logging.getLogger("hoopscout.analytics")
-    try:
-        if not _analytics_client:
-            logger.info("analytics disabled - skipping alias")
-            return
-
-        logger.info("aliasing user: %s -> %s", previous_id, distinct_id)
-        try:
-            _analytics_client.alias(previous_id, distinct_id)
-            logger.info("user aliased successfully")
-        except Exception as e:
-            logger.exception("Failed to alias user: %s", e)
-    except Exception as e:
-        logger.exception("Error aliasing user: %s", e)
-
-
-def shutdown_analytics() -> None:
-    """Flush and shutdown the PostHog analytics client on app exit.
-    
-    Critical for Render's ephemeral dynos to ensure queued events aren't lost on restart.
-    """
-    try:
-        if _analytics_client:
-            # Flush any pending events before shutdown
-            if hasattr(_analytics_client, "flush"):
-                _analytics_client.flush()
-            # Then shutdown the client
-            if hasattr(_analytics_client, "shutdown"):
-                _analytics_client.shutdown()
-            logger = logging.getLogger("hoopscout.analytics")
-            logger.info("PostHog analytics flushed and shutdown on exit")
-    except Exception as e:
-        logger = logging.getLogger("hoopscout.analytics")
-        logger.exception("Error during analytics shutdown: %s", e)
-
-
-def analytics_enabled() -> dict:
-    """Return a small dict describing analytics client state for debugging."""
-    try:
-        return {
-            "enabled": bool(_analytics_client),
-            "host": os.getenv("POSTHOG_HOST") or "https://app.posthog.com",
-            "has_key": bool(os.getenv("POSTHOG_API_KEY")),
-        }
-    except Exception:
-        return {"enabled": False, "host": None, "has_key": False}
-
-# Import name variant mappings from dedicated file
-from utils.name_variants import NICKNAME_MAP
-
-# Matching thresholds (configurable via env)
-FIRSTNAME_REQUIRE = int(os.getenv("FIRSTNAME_REQUIRE", "90"))
-FIRSTNAME_SECONDARY = int(os.getenv("FIRSTNAME_SECONDARY", "70"))
-LASTNAME_HIGH = int(os.getenv("LASTNAME_HIGH", "95"))
-
-
-# ============================================================================
-# NAME MATCHING HELPERS (Extracted to reduce duplication)
-# ============================================================================
-
-def _compute_name_similarity(name_a: str, name_b: str) -> int:
-    """Compute fuzzy similarity between two names.
-    
-    Uses rapidfuzz if available, falls back to difflib's SequenceMatcher.
-    
-    Args:
-        name_a: First name to compare
-        name_b: Second name to compare
-        
-    Returns:
-        Similarity score from 0-100
-    """
-    if _HAS_RAPIDFUZZ and _token_set_ratio is not None:
-        try:
-            return int(_token_set_ratio(name_a, name_b) or 0)
-        except Exception:
-            return 0
-    else:
-        try:
-            return int(SequenceMatcher(None, name_a, name_b).ratio() * 100)
-        except Exception:
-            return 0
-
-
-def _check_first_name_alignment(
-    player_norm: str,
-    candidate_name: str,
-    primary_score: int,
-    primary_threshold: int = LASTNAME_HIGH,
-) -> bool:
-    """Check if first names align sufficiently for matching.
-    
-    Validates that first names are similar enough to accept a match,
-    accounting for nicknames and fuzzy matching. Used as a safety check
-    to prevent surname-only false matches (e.g., two different players
-    with the same last name).
-    
-    Args:
-        player_norm: Normalized query player name
-        candidate_name: Candidate player name from database
-        primary_score: Main similarity score (embedding or fuzzy)
-        primary_threshold: Threshold above which secondary fname requirement applies
-        
-    Returns:
-        True if first names align sufficiently, False otherwise
-    """
-    try:
-        pn_parts = player_norm.split()
-        nn_parts = normalize_name(candidate_name, transliterate=True).split()
-        
-        if not pn_parts or not nn_parts:
-            return False
-        
-        first_p = pn_parts[0]
-        first_n = nn_parts[0]
-        
-        # Check nickname canonicalization first (fast path)
-        first_p_canon = NICKNAME_MAP.get(first_p, first_p)
-        first_n_canon = NICKNAME_MAP.get(first_n, first_n)
-        
-        if first_p_canon == first_n_canon:
-            return True  # Exact match or nickname equivalence
-        
-        # Compute fuzzy similarity
-        fname_sim = _compute_name_similarity(first_p, first_n)
-        
-        # Allow if first name meets primary threshold OR
-        # if primary score is very high and fname meets secondary threshold
-        return (
-            fname_sim >= FIRSTNAME_REQUIRE
-            or (primary_score >= primary_threshold and fname_sim >= FIRSTNAME_SECONDARY)
-        )
-    except Exception:
-        return False
-
-
-def _last_names_align(a_norm: str, b_norm: str) -> bool:
-    """Require last names to agree (exact, phonetic, or fuzzy) for suggestions.
-
-    Tolerates 1-2 char typos (e.g., Papanikolaoy vs Papanikolaou).
-    Prevents cross-player reuse when surnames are genuinely different.
-    
-    Args:
-        a_norm: First normalized name
-        b_norm: Second normalized name
-        
-    Returns:
-        True if last names align, False otherwise
-    """
-    try:
-        a_last = (a_norm.split()[-1] if a_norm else "").strip()
-        b_last = (b_norm.split()[-1] if b_norm else "").strip()
-        if not a_last or not b_last:
-            return False
-        if a_last == b_last:
-            return True
-        # Normalize both for diacritic/case comparison
-        try:
-            import unicodedata
-            a_clean = ''.join(c for c in unicodedata.normalize('NFD', a_last) if unicodedata.category(c) != 'Mn').lower()
-            b_clean = ''.join(c for c in unicodedata.normalize('NFD', b_last) if unicodedata.category(c) != 'Mn').lower()
-            if a_clean == b_clean:
-                return True
-        except Exception:
-            pass
-        try:
-            pa = phonetic_key(a_last)
-            pb = phonetic_key(b_last)
-            if pa and pb and pa == pb:
-                return True
-        except Exception:
-            pass
-        # Fuzzy match for typos: allow if similarity >= 80% and length difference <= 2
-        # Lowered from 85% to catch common single-char typos (e.g., "donic" vs "doncic" = 83%)
-        try:
-            if _HAS_RAPIDFUZZ and _token_set_ratio is not None:
-                sim = int(_token_set_ratio(a_last.lower(), b_last.lower()) or 0)
-            else:
-                sim = int(SequenceMatcher(None, a_last.lower(), b_last.lower()).ratio() * 100)
-            
-            len_diff = abs(len(a_last) - len(b_last))
-            if sim >= 80 and len_diff <= 2:
-                return True
-        except Exception:
-            pass
-    except Exception:
-        return False
-    return False
-
-
-def _ensure_parsed_payload(payload: dict) -> dict:
-    """Populate derived fields from markdown when missing and ensure `report_html`.
-
-    Best-effort helper used by cached/library/suggestion paths so the client
-    receives structured `info_fields`, `grades`, `season_snapshot`,
-    `last3_games`, and `report_html` when possible.
-    """
-    if not isinstance(payload, dict):
-        return payload
-
-    report_md = (payload.get("report_md") or "")
-    try:
-        display_md = extract_display_md(report_md)
-        payload.setdefault("report_html", md_to_safe_html(display_md))
-    except Exception:
-        payload.setdefault("report_html", "")
-
-    try:
-        from utils.parse import (
-            extract_info_fields,
-            extract_grades,
-            extract_season_snapshot,
-            extract_last3_games,
-        )
-
-        if not payload.get("info_fields"):
-            try:
-                payload["info_fields"] = extract_info_fields(report_md)
-            except Exception:
-                payload["info_fields"] = {}
-
-        if not payload.get("grades"):
-            try:
-                grades, final_verdict = extract_grades(report_md)
-                payload["grades"] = grades
-                payload["final_verdict"] = final_verdict
-            except Exception:
-                payload["grades"] = []
-                payload.setdefault("final_verdict", "")
-
-        if not payload.get("season_snapshot"):
-            try:
-                payload["season_snapshot"] = extract_season_snapshot(report_md)
-            except Exception:
-                payload["season_snapshot"] = {}
-
-        if not payload.get("last3_games"):
-            try:
-                payload["last3_games"] = extract_last3_games(report_md)
-            except Exception:
-                payload["last3_games"] = []
-    except Exception:
-        # If parsing helpers are unavailable, leave payload as-is
-        pass
-
-    return payload
 
 
 def _find_by_embedding_similarity(
@@ -758,6 +434,7 @@ def _best_similar_report(
                     s2 = 0
             score = max(s1, s2)
         else:
+            from difflib import SequenceMatcher
             score = int(SequenceMatcher(None, player_norm, name_norm).ratio() * 100)
 
         # If the caller provided a league and the candidate has one,
@@ -815,6 +492,7 @@ def _best_similar_report(
                     except Exception:
                         red_score = 0
                 else:
+                    from difflib import SequenceMatcher
                     red_score = int(
                         SequenceMatcher(None, p_reduced, n_reduced).ratio() * 100
                     )
@@ -829,6 +507,7 @@ def _best_similar_report(
                         first_sim = int(_token_set_ratio(first_p, first_n) or 0)
                         last_sim = int(_token_set_ratio(lp, ln) or 0)
                     else:
+                        from difflib import SequenceMatcher
                         first_sim = int(SequenceMatcher(None, first_p, first_n).ratio() * 100)
                         last_sim = int(SequenceMatcher(None, lp, ln).ratio() * 100)
                 except Exception:
@@ -964,135 +643,3 @@ def _best_similar_report(
         }
 
     return None
-
-
-# --- Cost Estimation ---
-
-def estimate_cost(usage: dict, prices: dict) -> float:
-    """Calculate estimated cost based on token usage and pricing.
-    
-    Args:
-        usage: Dict with 'input_tokens' and 'output_tokens' keys
-        prices: Dict with 'input' and 'output' keys (price per 1M tokens)
-    
-    Returns:
-        Estimated cost in dollars
-    """
-    input_tokens = usage.get("input_tokens", 0)
-    output_tokens = usage.get("output_tokens", 0)
-    
-    return (
-        input_tokens / 1_000_000 * prices["input"]
-        + output_tokens / 1_000_000 * prices["output"]
-    )
-
-
-# Default pricing for common models ($ per 1M tokens)
-# Source: https://openai.com/api/pricing/ (as of January 2026)
-MODEL_PRICES = {
-    # GPT-5 Series (Flagship models)
-    "gpt-5.2": {"input": 1.75, "output": 14.00},
-    "gpt-5.2-pro": {"input": 21.00, "output": 168.00},
-    "gpt-5-mini": {"input": 0.25, "output": 2.00},
-    
-    # GPT-4.1 Series
-    "gpt-4.1": {"input": 3.00, "output": 12.00},
-    "gpt-4.1-mini": {"input": 0.80, "output": 3.20},
-    "gpt-4.1-nano": {"input": 0.20, "output": 0.80},
-    
-    # Legacy GPT-4 Series (deprecated, using estimated pricing)
-    "gpt-4": {"input": 30.0, "output": 60.0},
-    "gpt-4-turbo": {"input": 10.0, "output": 30.0},
-    "gpt-4o": {"input": 5.0, "output": 15.0},
-    "gpt-4o-mini": {"input": 0.15, "output": 0.6},
-    
-    # GPT-3.5 Series (legacy)
-    "gpt-3.5-turbo": {"input": 0.5, "output": 1.5},
-    
-    # Default fallback
-    "default": {"input": 1.75, "output": 14.00},  # GPT-5.2 pricing
-}
-
-
-def get_model_prices(model: str) -> dict:
-    """Get pricing for a specific model.
-    
-    Args:
-        model: Model name
-        
-    Returns:
-        Dict with 'input' and 'output' pricing per 1M tokens
-    """
-    # Check exact match first
-    if model in MODEL_PRICES:
-        return MODEL_PRICES[model]
-    
-    # Check if model name contains known model as substring
-    for model_key in MODEL_PRICES:
-        if model_key in model.lower():
-            return MODEL_PRICES[model_key]
-    
-    # Return default pricing
-    return MODEL_PRICES["default"]
-
-
-def fetch_report_payload(user_id: str, report_id: int):
-    """Fetch report payload, trying get_report first, then direct Postgres query.
-    
-    Returns the payload dict or None if not found.
-    Handles report_md reconstruction from split columns.
-    """
-    suggestion_payload = None
-    try:
-        from db import get_report
-        suggestion_payload = get_report(user_id, report_id)
-    except Exception:
-        pass
-    
-    # If not found, try a direct Postgres read
-    if not suggestion_payload:
-        try:
-            import db
-            pool = db._get_pool()
-            with pool.connection() as conn_pg, conn_pg.cursor() as cur:
-                cur.execute(
-                    "SELECT payload, report_md, report_narrative_md, stats_md, player_name, created_at, cached FROM public.reports WHERE id = %s LIMIT 1",
-                    (report_id,),
-                )
-                prow = cur.fetchone()
-            if prow:
-                payload_row = prow[0]
-                report_md = prow[1] or ""
-                narrative_md = prow[2]
-                stats_md = prow[3]
-                
-                # Reconstruct report_md from split columns if they exist
-                if narrative_md and stats_md:
-                    report_md = narrative_md + "\n\n" + stats_md
-                
-                if payload_row:
-                    suggestion_payload = payload_row
-                    if (
-                        isinstance(suggestion_payload, dict)
-                        and "report_md" not in suggestion_payload
-                    ):
-                        suggestion_payload["report_md"] = report_md
-                else:
-                    display_md = extract_display_md(report_md)
-                    suggestion_payload = {
-                        "player": prow[4] or "",
-                        "report_md": report_md,
-                        "report_html": md_to_safe_html(display_md),
-                        "created_at": prow[5] or None,
-                        "cached": bool(prow[6]),
-                    }
-                try:
-                    from utils.render import ensure_parsed_payload
-                    suggestion_payload = ensure_parsed_payload(suggestion_payload)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-    
-    return suggestion_payload
-
