@@ -35,9 +35,13 @@ CREATE TABLE IF NOT EXISTS public.reports (
     user_id UUID NOT NULL,
     player_name TEXT NOT NULL,
     query TEXT,
-    report_md TEXT NOT NULL,
+    report_md TEXT,
+    report_narrative_md TEXT,
+    stats_md TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    report_generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    stats_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     payload JSONB,
     cached BOOLEAN NOT NULL DEFAULT FALSE,
     query_key TEXT,
@@ -66,6 +70,7 @@ CREATE TABLE IF NOT EXISTS public.cost_tracking (
     output_tokens INTEGER NOT NULL DEFAULT 0,
     estimated_cost NUMERIC(10, 6) NOT NULL DEFAULT 0.0,
     player_name TEXT DEFAULT '',
+    operation_type TEXT DEFAULT 'generation',
     timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -73,6 +78,7 @@ CREATE INDEX IF NOT EXISTS idx_cost_tracking_user_id ON public.cost_tracking(use
 CREATE INDEX IF NOT EXISTS idx_cost_tracking_report_id ON public.cost_tracking(report_id);
 CREATE INDEX IF NOT EXISTS idx_cost_tracking_timestamp ON public.cost_tracking(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_cost_tracking_model ON public.cost_tracking(model);
+CREATE INDEX IF NOT EXISTS idx_cost_tracking_operation_type ON public.cost_tracking(operation_type);
 
 -- =============================================================================
 -- SEMANTIC SEARCH (Embeddings for Fuzzy Matching)

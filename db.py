@@ -344,27 +344,43 @@ def upsert_report(
 ) -> int:
     """
     Inserts OR updates the user's report for this query_key.
+    Splits report_md into narrative_md and stats_md for cleaner management.
     Requires unique index: (user_id, query_key).
     """
     query_key = _canonical_query_key(query_obj)
     q_text = query_key
     p_text = json.dumps(payload or {}, ensure_ascii=False, default=str)
+    
+    # Split report_md into narrative and stats
+    import re
+    stats_pattern = r'### Season snapshot'
+    match = re.search(stats_pattern, report_md or "")
+    if match:
+        narrative_md = report_md[:match.start()]
+        stats_md = report_md[match.start():]
+    else:
+        narrative_md = report_md or ""
+        stats_md = ""
 
     with _get_pool().connection() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            insert into public.reports (user_id, player_name, query, query_key, report_md, payload, cached)
-            values (%s, %s, %s, %s, %s, %s::jsonb, %s)
+            insert into public.reports (user_id, player_name, query, query_key, report_md, report_narrative_md, stats_md, payload, cached, report_generated_at, stats_updated_at)
+            values (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, now(), now())
             on conflict (user_id, query_key) do update
               set player_name = excluded.player_name,
                   query       = excluded.query,
                   report_md   = excluded.report_md,
+                  report_narrative_md = excluded.report_narrative_md,
+                  stats_md    = excluded.stats_md,
                   payload     = excluded.payload,
                   cached      = excluded.cached,
-                  updated_at  = now()
+                  updated_at  = now(),
+                  report_generated_at = now(),
+                  stats_updated_at = now()
             returning id
-            """,
-            (user_id, player_name, q_text, query_key, report_md, p_text, bool(cached)),
+            """, 
+            (user_id, player_name, q_text, query_key, report_md, narrative_md, stats_md, p_text, bool(cached)),
         )
         (rid,) = cur.fetchone()
         conn.commit()
@@ -378,12 +394,26 @@ def update_report_by_id(
     report_md: str,
     payload: Dict[str, Any],
     cached: bool,
+    update_generated_at: bool = True,
+    update_stats_updated_at: bool = True,
 ) -> int:
     """
-    Updates an existing report by ID (for regenerations).
+    Updates an existing report by ID (for regenerations and stats refresh).
+    Splits report_md into narrative_md and stats_md.
     Ensures the report belongs to the user before updating.
     """
     p_text = json.dumps(payload or {}, ensure_ascii=False, default=str)
+    
+    # Split report_md into narrative and stats
+    import re
+    stats_pattern = r'### Season snapshot'
+    match = re.search(stats_pattern, report_md or "")
+    if match:
+        narrative_md = report_md[:match.start()]
+        stats_md = report_md[match.start():]
+    else:
+        narrative_md = report_md or ""
+        stats_md = ""
 
     with _get_pool().connection() as conn, conn.cursor() as cur:
         cur.execute(
@@ -391,14 +421,28 @@ def update_report_by_id(
             update public.reports
             set player_name = %s,
                 report_md = %s,
+                report_narrative_md = %s,
+                stats_md = %s,
                 payload = %s::jsonb,
                 cached = %s,
-                created_at = now(),
-                updated_at = now()
+                updated_at = now(),
+                report_generated_at = case when %s then now() else report_generated_at end,
+                stats_updated_at = case when %s then now() else stats_updated_at end
             where id = %s and user_id = %s
             returning id
             """,
-            (player_name, report_md, p_text, bool(cached), report_id, user_id),
+            (
+                player_name,
+                report_md,
+                narrative_md,
+                stats_md,
+                p_text,
+                bool(cached),
+                bool(update_generated_at),
+                bool(update_stats_updated_at),
+                report_id,
+                user_id,
+            ),
         )
         row = cur.fetchone()
         if not row:
@@ -567,7 +611,7 @@ def get_report(user_id: str, report_id: int) -> Optional[Dict[str, Any]]:
     with _get_pool().connection() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            select payload, report_md, player_name, created_at, updated_at, cached
+            select payload, report_md, report_narrative_md, stats_md, player_name, created_at, updated_at, report_generated_at, stats_updated_at, cached
             from public.reports
             where id = %s and user_id = %s
             """,
@@ -578,7 +622,13 @@ def get_report(user_id: str, report_id: int) -> Optional[Dict[str, Any]]:
     if not row:
         return None
 
-    payload, report_md, player_name, created_at, updated_at, cached = row
+    payload, report_md, narrative_md, stats_md, player_name, created_at, updated_at, report_generated_at, stats_updated_at, cached = row
+    
+    # Reconstruct report_md from split columns if they exist
+    if narrative_md and stats_md:
+        report_md = narrative_md + "\n\n" + stats_md
+    elif not report_md:
+        report_md = ""
 
     # If payload exists (jsonb), return it as the main object
     if payload:
@@ -591,6 +641,10 @@ def get_report(user_id: str, report_id: int) -> Optional[Dict[str, Any]]:
             payload["created_at"] = created_at.isoformat()
         if isinstance(payload, dict) and "updated_at" not in payload:
             payload["updated_at"] = updated_at.isoformat() if updated_at else (created_at.isoformat() if created_at else None)
+        if isinstance(payload, dict) and "report_generated_at" not in payload:
+            payload["report_generated_at"] = report_generated_at.isoformat() if report_generated_at else (created_at.isoformat() if created_at else None)
+        if isinstance(payload, dict) and "stats_updated_at" not in payload:
+            payload["stats_updated_at"] = stats_updated_at.isoformat() if stats_updated_at else (updated_at.isoformat() if updated_at else (created_at.isoformat() if created_at else None))
         return payload
 
     # fallback: minimal
@@ -600,6 +654,8 @@ def get_report(user_id: str, report_id: int) -> Optional[Dict[str, Any]]:
         "cached": bool(cached),
         "created_at": created_at.isoformat() if created_at else None,
         "updated_at": updated_at.isoformat() if updated_at else (created_at.isoformat() if created_at else None),
+        "report_generated_at": report_generated_at.isoformat() if report_generated_at else (created_at.isoformat() if created_at else None),
+        "stats_updated_at": stats_updated_at.isoformat() if stats_updated_at else (updated_at.isoformat() if updated_at else (created_at.isoformat() if created_at else None)),
     }
 
 
@@ -608,7 +664,7 @@ def get_report_by_id(report_id: int) -> Optional[Dict[str, Any]]:
     with _get_pool().connection() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            select payload, report_md, player_name, created_at, cached, user_id
+            select payload, report_md, report_narrative_md, stats_md, player_name, created_at, updated_at, report_generated_at, stats_updated_at, cached, user_id
             from public.reports
             where id = %s
             """,
@@ -619,7 +675,13 @@ def get_report_by_id(report_id: int) -> Optional[Dict[str, Any]]:
     if not row:
         return None
 
-    payload, report_md, player_name, created_at, cached, source_user_id = row
+    payload, report_md, narrative_md, stats_md, player_name, created_at, updated_at, report_generated_at, stats_updated_at, cached, source_user_id = row
+    
+    # Reconstruct report_md from split columns if they exist
+    if narrative_md and stats_md:
+        report_md = narrative_md + "\n\n" + stats_md
+    elif not report_md:
+        report_md = ""
 
     # If payload exists (jsonb), return it as the main object
     if payload:
@@ -630,6 +692,12 @@ def get_report_by_id(report_id: int) -> Optional[Dict[str, Any]]:
             payload["cached"] = bool(cached)
         if isinstance(payload, dict) and "created_at" not in payload and created_at:
             payload["created_at"] = created_at.isoformat()
+        if isinstance(payload, dict) and "updated_at" not in payload:
+            payload["updated_at"] = updated_at.isoformat() if updated_at else (created_at.isoformat() if created_at else None)
+        if isinstance(payload, dict) and "report_generated_at" not in payload:
+            payload["report_generated_at"] = report_generated_at.isoformat() if report_generated_at else (created_at.isoformat() if created_at else None)
+        if isinstance(payload, dict) and "stats_updated_at" not in payload:
+            payload["stats_updated_at"] = stats_updated_at.isoformat() if stats_updated_at else (updated_at.isoformat() if updated_at else (created_at.isoformat() if created_at else None))
         if isinstance(payload, dict) and "source_user_id" not in payload:
             payload["source_user_id"] = source_user_id
         return payload
@@ -640,6 +708,9 @@ def get_report_by_id(report_id: int) -> Optional[Dict[str, Any]]:
         "report_md": report_md or "",
         "cached": bool(cached),
         "created_at": created_at.isoformat() if created_at else None,
+        "updated_at": updated_at.isoformat() if updated_at else (created_at.isoformat() if created_at else None),
+        "report_generated_at": report_generated_at.isoformat() if report_generated_at else (created_at.isoformat() if created_at else None),
+        "stats_updated_at": stats_updated_at.isoformat() if stats_updated_at else (updated_at.isoformat() if updated_at else (created_at.isoformat() if created_at else None)),
     }
 
 
@@ -656,8 +727,9 @@ def insert_cost_tracking(
     output_tokens: int,
     estimated_cost: float,
     player_name: str | None = None,
+    operation_type: str = "generation",
 ) -> None:
-    """Record cost tracking data for a report generation.
+    """Record cost tracking data for a report generation or stats refresh.
     
     Args:
         user_id: User who generated the report
@@ -666,6 +738,8 @@ def insert_cost_tracking(
         input_tokens: Number of input tokens used
         output_tokens: Number of output tokens used
         estimated_cost: Calculated cost in dollars
+        player_name: Optional player name for easier tracking
+        operation_type: Either 'generation' (full report) or 'refresh' (stats only)
     """
     with _get_pool().connection() as conn, conn.cursor() as cur:
         cur.execute(
@@ -678,9 +752,10 @@ def insert_cost_tracking(
                 output_tokens,
                 estimated_cost,
                 player_name,
+                operation_type,
                 timestamp
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
             """,
             (
                 user_id,
@@ -690,6 +765,7 @@ def insert_cost_tracking(
                 output_tokens,
                 estimated_cost,
                 player_name or "",
+                operation_type,
             ),
         )
         conn.commit()

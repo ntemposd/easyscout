@@ -41,15 +41,19 @@ easyscout/
 ├── requirements.txt       # Python dependencies
 ├── .env.example           # Environment variables template
 ├── tailwind.config.js     # Tailwind CSS configuration
-├── documents/             # Architecture & documentation
-├── migrations/
-│   ├── apply_migration.py # Migration helper
-│   └── ...                # Historical migrations
 ├── services/
-│   └── scout.py           # Scouting report generation
+│   ├── scout.py           # Scouting report generation
+│   ├── reports.py         # Report API endpoints
+│   ├── analytics.py       # Analytics HTTP routes
+│   └── ...                # Other services
 ├── utils/
+│   ├── analytics.py       # PostHog SDK wrapper
+│   ├── name_matching.py   # Name comparison primitives
+│   ├── similarity_matching.py # Report fuzzy search
+│   ├── embeddings.py      # Vector math & similarity
+│   ├── cost_pricing.py    # Model pricing lookup
+│   ├── payload_handler.py # Report data enrichment
 │   ├── prompts.py         # Prompt loading
-│   ├── embeddings.py      # Name matching & fuzzy search
 │   ├── metrics.py         # Instrumentation
 │   └── ...                # Other utilities
 ├── templates/             # Jinja2 HTML templates

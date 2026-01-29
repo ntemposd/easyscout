@@ -148,16 +148,16 @@ def get_or_generate_scout_report(
                 
                 logger.info(f"Found cached report for {player}, updated_at={updated_at_str}")
                 
-                # Check if stats are stale (>30 seconds since last update for testing)
+                # Check if stats are stale (>24 hours since last update)
                 needs_stats_refresh = False
                 if updated_at_str:
                     try:
                         updated_at = datetime.fromisoformat(updated_at_str.replace('Z', '+00:00'))
                         age = datetime.now(timezone.utc) - updated_at
                         logger.info(f"Report age: {age.total_seconds():.1f} seconds")
-                        if age > timedelta(seconds=20):
+                        if age > timedelta(hours=24):
                             needs_stats_refresh = True
-                            logger.info(f"Stats are stale (>{20}s), triggering refresh")
+                            logger.info(f"Stats are stale (>24h), triggering refresh")
                         else:
                             logger.info(f"Stats are fresh, serving cached version")
                     except Exception as e:
@@ -235,7 +235,7 @@ def get_or_generate_scout_report(
                         # If stats refresh fails, serve stale version
                         pass
                 
-                return _build_payload_from_report(
+                payload = _build_payload_from_report(
                     report_md=report_md,
                     player=cached_row.get("player_name") or player,
                     team=cached_row.get("team") or "",
@@ -246,6 +246,10 @@ def get_or_generate_scout_report(
                     cached=True,
                     created_at=cached_row.get("created_at"),
                 )
+                # Mark if stats were just refreshed
+                if needs_stats_refresh:
+                    payload["stats_refreshed"] = True
+                return payload
 
     user_prompt = f"""
 Player: {player}
@@ -306,7 +310,7 @@ Write the scouting report now.
                 pass
             try:
                 # Track generation event
-                from utils.app_helpers import track_event
+                from utils.analytics import track_event
 
                 track_event(
                     user_id,

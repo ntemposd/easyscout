@@ -90,6 +90,7 @@ def store_embedding(report_id: int, vector: list[float]):
 
 
 def load_all_embeddings():
+    """Load all report embeddings from PostgreSQL"""
     now = time.time()
     try:
         if (
@@ -104,28 +105,26 @@ def load_all_embeddings():
     except Exception:
         pass
 
-    rows = conn.execute(
-        "SELECT report_id, embedding_json FROM report_embeddings"
-    ).fetchall()
-    out = []
-    for r in rows:
+    # Load from PostgreSQL
+    try:
+        embeddings_data = db.get_all_report_embeddings()
+        out = []
+        for report_id, embedding_vec in embeddings_data:
+            out.append((int(report_id), embedding_vec))
+        
         try:
-            vec = json.loads(r[1])
-            out.append((int(r[0]), vec))
+            _EMBED_CACHE["ts"] = now
+            _EMBED_CACHE["data"] = out
         except Exception:
-            continue
+            pass
 
-    try:
-        _EMBED_CACHE["ts"] = now
-        _EMBED_CACHE["data"] = out
+        try:
+            increment_metric("report_embedding_loads")
+        except Exception:
+            pass
+        return out
     except Exception:
-        pass
-
-    try:
-        increment_metric("report_embedding_loads")
-    except Exception:
-        pass
-    return out
+        return []
 
 
 def _query_hash(text: str) -> str:
