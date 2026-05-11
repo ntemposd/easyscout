@@ -1,8 +1,11 @@
 {% extends "base.html" %}
+{% block html_class %}landing-page{% endblock %}
+{% block body_class %}landing-page{% endblock %}
 {% block title %}Easyscout - Login{% endblock %}
 
 {% block body %}
-<main class="max-w-xl mx-auto px-4 py-10">
+<div aria-hidden="true" class="dots-overlay"></div>
+<main class="relative z-10 max-w-xl mx-auto px-4 py-10">
   <header class="mb-6">
     <h1 class="text-3xl font-extrabold tracking-tight section-title">Sign in</h1>
     <p class="text-base section-desc text-zinc-600">We’ll email you a magic link.</p>
@@ -41,13 +44,6 @@
 {% block scripts %}
 <script>
   (function() {
-    // If already signed in, go straight to the app
-    (async () => {
-      if (!window.sb || !window.sb.auth) return;
-      const { data } = await window.sb.auth.getSession();
-      if (data?.session) window.location.replace("/app");
-    })();
-
     // Listen for storage events from the callback tab
     window.addEventListener('storage', (e) => {
       if (e.key === 'auth_completed' && e.newValue) {

@@ -87,7 +87,19 @@ easyscout/
 2. **Create virtual environment**
    ```bash
    python -m venv .venv
-   source .venv/bin/activate  # Windows: .venv\Scripts\activate
+   ```
+
+   Activate it before installing dependencies or running the app so `python` and `pip`
+   resolve to the environment-local interpreter:
+
+   ```bash
+   # macOS / Linux
+   source .venv/bin/activate
+   ```
+
+   ```powershell
+   # Windows PowerShell
+   .\.venv\Scripts\Activate.ps1
    ```
 
 3. **Install dependencies**
@@ -112,6 +124,27 @@ easyscout/
    ```bash
    python run_server.py
    ```
+
+   If you prefer not to activate the environment, run the environment's interpreter directly:
+
+   ```powershell
+   .\.venv\Scripts\python.exe run_server.py
+   ```
+
+   For local development with automatic reload on code changes:
+
+   ```bash
+   python run_server.py --reload
+   ```
+
+   If you are editing `static/tailwind.input.css`, run the Tailwind watcher in a second terminal:
+
+   ```bash
+   npm run watch:css
+   ```
+
+   `--reload` picks up Python and Jinja template changes automatically. CSS and browser-side
+   JavaScript still require a browser refresh, and Tailwind source changes require the watcher.
    
    App runs at: http://127.0.0.1:5000
 
@@ -207,7 +240,7 @@ fetch('/api/dev/grant_credits', {
 
 ```bash
 export DEV_TOOLS=1  # Windows: set DEV_TOOLS=1
-python run_server.py
+python run_server.py --reload
 ```
 
 ---

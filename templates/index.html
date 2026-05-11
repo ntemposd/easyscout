@@ -4,13 +4,6 @@
 {% block body %}
 <main class="max-w-6xl mx-auto px-4 py-2" style="overflow-x: hidden;">
 
-  <!--<header class="space-y-2">
-     <h1 class="text-3xl font-bold">Scouting Reports</h1>
-    <p class="text-sm text-zinc-600">
-      Generate a scouting report from a player name. Cache-first. Web search optional. 
-    </p>
-  </header>-->
-
   <!-- App-only user badge (index-only bubble) -->
   <div class="mb-4">
     <span id="user_badge"></span>
@@ -478,13 +471,6 @@
       const { data } = await window.sb.auth.getSession();
       return data?.session?.access_token || null;
     };
-
-    // Removed logoutBtn click handler to let base.html handle logout globally
-    // logoutBtn?.addEventListener("click", () => {
-    //   try { window.sb.auth.signOut().catch(() => {}); } catch (e) {}
-    //   // Redirect immediately to the public landing
-    //   window.location.replace('/');
-    // });
 
     // ---- Reports sidebar ----
     const _reportsBeingLoaded = new Set();

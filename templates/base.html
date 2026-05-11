@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="h-full" style="overflow-x: hidden;">
+<html lang="en" class="h-full {% block html_class %}{% endblock %}" style="overflow-x: hidden;">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -31,30 +31,12 @@
     <script>
       // Shared list of paths exempt from auth redirects
       window.AUTH_EXEMPT_PATHS = ["/auth/callback", "/billing/success", "/app", "/privacy"];
-      
-      // Synchronous pre-check: if a Supabase session token exists in localStorage,
-      // redirect logged-in users away from public pages before rendering.
-      try {
-        const path = window.location.pathname || "/";
-        if (!window.AUTH_EXEMPT_PATHS.includes(path)) {
-          for (let i = 0; i < localStorage.length; i++) {
-            const k = localStorage.key(i) || "";
-            if (k.toLowerCase().includes('supabase') || k.toLowerCase().startsWith('sb')) {
-              const v = localStorage.getItem(k) || "";
-              if (v.includes('access_token') || v.includes('currentSession')) {
-                window.location.replace('/app');
-                break;
-              }
-            }
-          }
-        }
-      } catch (e) {}
     </script>
   </head>
 
-  <body class="min-h-screen bg-zinc-50 text-zinc-900 auth-checking flex flex-col" style="overflow-x: hidden;">
-    <!-- Auth loader shown while session/auth checks run -->
-    <div id="auth_loader" class="fixed inset-0 z-50 flex items-center justify-center bg-white/80">
+  <body class="min-h-screen bg-zinc-50 text-zinc-900 {% if request.path == '/app' %}auth-checking {% endif %}flex flex-col {% block body_class %}{% endblock %}" style="overflow-x: hidden;">
+    <!-- Auth loader blocks only the protected app route while session checks run -->
+    <div id="auth_loader" class="fixed inset-0 z-50 {% if request.path != '/app' %}hidden {% endif %}flex items-center justify-center bg-white/80">
       <div class="flex items-center gap-3">
         <svg class="animate-spin h-6 w-6 text-[#0E2018]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -65,13 +47,16 @@
     </div>
    
     <!-- Navbar -->
-    <header class="sticky top-0 z-50 bg-zinc-50/90 backdrop-blur border-b border-zinc-200">
+    <header class="sticky top-0 z-50 bg-black-50/50 backdrop-blur border-b border-zinc-200">
       <div class="max-w-6xl mx-auto px-4 py-2 flex items-center justify-between">
-        <a href="/" class="inline-flex items-center gap-3">
-          <img src="/static/logo.webp" alt="Easyscout Logo" class="h-12 w-auto" />
-        </a>
-
-        <nav class="flex items-center gap-4 text-sm">
+        
+          <a href="/" class="inline-flex items-center gap-3">
+            <h1 class="text-3xl md:text-4xl font-extrabold tracking-tight text-zinc-900 justify-start">
+              <span class="bg-gradient-to-r from-[#F68A1F] to-[#6FD06B] bg-clip-text text-transparent">
+                Easy</span>scout
+            </h1>
+          </a>
+          <nav class="flex items-center gap-4 text-sm">
           <a id="login_link" href="/login" class="btn-primary shadow-sm">
             Login
           </a>
@@ -88,8 +73,9 @@
     <div class="flex-grow">
       {% block body %}{% endblock %}
     </div>
-    <footer class="border-t border-zinc-200 mt-8">
+    <footer class="border-t bg-white border-zinc-200 mt-8">
       <div class="max-w-6xl mx-auto px-4 py-6 text-sm text-zinc-500 flex flex-col sm:flex-row gap-2 justify-between">
+        
         <span>
           © {{ current_year or "2026" }} · Built with 🧡 by
           <a href="https://ntemposd.me" class="underline hover:text-zinc-700">
@@ -97,9 +83,11 @@
           </a>
         </span>
 
+        <span><img src="/static/emblem.webp" alt="Easyscout Emblem" class="h-12 w-auto" /></span>
+
         <span class="flex gap-4">
-          <a href="/privacy" class="hover:underline hover:text-zinc-700">Privacy policy</a>
-          <a href="https://github.com/ntemposd/easyscout" target="_blank" rel="noopener noreferrer" class="hover:underline hover:text-zinc-700">Source code</a>
+          <a href="/privacy" class="underline hover:text-zinc-700">Privacy policy</a>
+          <a href="https://github.com/ntemposd/easyscout" target="_blank" rel="noopener noreferrer" class="underline hover:text-zinc-700">Source code</a>
         </span>
       </div>
     </footer>
@@ -395,33 +383,93 @@
           return window.AUTH_EXEMPT_PATHS.some(e => path === e || path.startsWith(e));
         }
 
-        window.sb.auth.getSession().then(({ data }) => {
-          if (data?.session) {
-            showLoggedIn();
+        function redirectWithReveal(path) {
+          revealBody();
+          window.location.replace(path);
+        }
+
+        function clearSupabaseStorage() {
+          const stores = [window.localStorage, window.sessionStorage];
+          for (const store of stores) {
             try {
-              const p = window.location.pathname || "/";
-              if (p !== "/app" && !shouldExemptPath(p)) {
-                window.location.replace("/app");
-                return;
+              if (!store) continue;
+              for (let i = store.length - 1; i >= 0; i--) {
+                const key = store.key(i) || '';
+                if (key.toLowerCase().includes('supabase') || key.toLowerCase().startsWith('sb')) {
+                  store.removeItem(key);
+                }
               }
-            } catch (e) {
-              // ignore and continue
+            } catch (e) {}
+          }
+        }
+
+        function resetBrokenAuthStateAndRedirect(path) {
+          try { clearSupabaseStorage(); } catch (e) {}
+          try { window.sb.auth.signOut().catch(() => {}); } catch (e) {}
+          redirectWithReveal(path);
+        }
+
+        let initialAuthSettled = false;
+        const initialAuthTimeout = window.setTimeout(() => {
+          if (initialAuthSettled) return;
+          console.warn("Initial auth session check timed out");
+          try {
+            const p = window.location.pathname || "/";
+            if (p === "/app") {
+              resetBrokenAuthStateAndRedirect("/login");
+              return;
             }
-            // set badge greeting from the session
-            setUserBadgeFromSession(data?.session || null);
-          } else {
-            // If we're on the app page and there is no session, redirect to /login
+          } catch (e) {}
+          showLoggedOut();
+          revealBody();
+        }, 4000);
+
+        window.sb.auth.getSession()
+          .then(({ data }) => {
+            initialAuthSettled = true;
+            window.clearTimeout(initialAuthTimeout);
+
+            if (data?.session) {
+              showLoggedIn();
+              try {
+                const p = window.location.pathname || "/";
+                if (p !== "/app" && !shouldExemptPath(p)) {
+                  redirectWithReveal("/app");
+                  return;
+                }
+              } catch (e) {
+                // ignore and continue
+              }
+              // set badge greeting from the session
+              setUserBadgeFromSession(data?.session || null);
+            } else {
+              // If we're on the app page and there is no session, redirect to /login
+              try {
+                const p = window.location.pathname || "/";
+                if (p === "/app") {
+                  resetBrokenAuthStateAndRedirect("/login");
+                  return;
+                }
+              } catch (e) {}
+              showLoggedOut();
+            }
+
+            revealBody();
+          })
+          .catch((err) => {
+            initialAuthSettled = true;
+            window.clearTimeout(initialAuthTimeout);
+            console.warn("Initial auth session check failed", err);
             try {
               const p = window.location.pathname || "/";
               if (p === "/app") {
-                window.location.replace("/login");
+                resetBrokenAuthStateAndRedirect("/login");
                 return;
               }
             } catch (e) {}
             showLoggedOut();
-          }
-          revealBody();
-        });
+            revealBody();
+          });
 
         // React to auth changes
         window.sb.auth.onAuthStateChange((_event, session) => {
@@ -430,7 +478,7 @@
             try {
               const p = window.location.pathname || "/";
               if (p !== "/app" && !shouldExemptPath(p)) {
-                window.location.replace("/app");
+                redirectWithReveal("/app");
               }
             } catch (e) {
               // ignore
@@ -441,7 +489,7 @@
             try {
               const p = window.location.pathname || "/";
               if (p === "/app") {
-                window.location.replace("/login");
+                resetBrokenAuthStateAndRedirect("/login");
                 return;
               }
             } catch (e) {}

@@ -12,6 +12,14 @@ def initialize_sentry():
     
     No-op if SENTRY_DSN is unset or sentry_sdk not installed.
     """
+    dsn = os.getenv("SENTRY_DSN", "").strip()
+    if not dsn:
+        return
+
+    if os.getenv("EASYSCOUT_DEV_SERVER") == "1" and os.getenv("SENTRY_ENABLE_DEV_SERVER") != "1":
+        logger.info("Sentry disabled for local Flask dev server. Set SENTRY_ENABLE_DEV_SERVER=1 to enable.")
+        return
+
     try:
         import sentry_sdk
         from sentry_sdk.integrations.excepthook import ExcepthookIntegration
@@ -22,7 +30,7 @@ def initialize_sentry():
 
     SENTRY_TRACES_SAMPLE_RATE = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.05"))
     sentry_sdk.init(
-        dsn=os.getenv("SENTRY_DSN", ""),
+        dsn=dsn,
         integrations=[
             FlaskIntegration(),
             LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),

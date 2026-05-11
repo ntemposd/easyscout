@@ -1,8 +1,11 @@
 {% extends "base.html" %}
+{% block html_class %}landing-page{% endblock %}
+{% block body_class %}landing-page{% endblock %}
 {% block title %}Easyscout - Page Not Found{% endblock %}
 
 {% block body %}
-<main class="max-w-6xl mx-auto px-4 py-20 text-center">
+<div aria-hidden="true" class="dots-overlay"></div>
+<main class="relative z-10 max-w-6xl mx-auto px-4 py-20 text-center">
   <div class="space-y-6">
     <div class="text-8xl font-bold text-zinc-300">404</div>
     
